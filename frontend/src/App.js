@@ -2,7 +2,6 @@ import React from "react";
 import "./App.css";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
-import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import MemberDashboard from "./pages/MemberDashboard";
@@ -25,9 +24,9 @@ function Protected({ children, adminOnly = false }) {
 
 function HomeRoute() {
   const { user, loading } = useAuth();
-  if (loading || user === null) return <Landing />;
-  if (!user) return <Landing />;
-  return <Navigate to={user.role === "admin" || user.role === "super_admin" ? "/admin" : "/dashboard"} />;
+  if (loading || user === null) return <div className="min-h-screen bg-app flex items-center justify-center">Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={user.role === "admin" || user.role === "super_admin" ? "/admin" : "/dashboard"} replace />;
 }
 
 function App() {

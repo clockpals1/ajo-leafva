@@ -30,7 +30,7 @@ export default function Login() {
           <div className="font-display text-xl">Ajo</div>
         </Link>
         <h1 className="font-display text-3xl mb-2">Welcome back</h1>
-        <p className="text-sm mb-8" style={{ color: "var(--muted)" }}>Sign in to continue managing contributions.</p>
+        <p className="text-sm mb-8" style={{ color: "var(--muted)" }}>Sign in to continue.</p>
         <form onSubmit={submit} className="space-y-4" data-testid="login-form">
           <div>
             <label className="label-eyebrow block mb-2">Email</label>
@@ -50,7 +50,7 @@ export default function Login() {
           </button>
         </form>
         <p className="mt-6 text-sm text-center" style={{ color: "var(--muted)" }}>
-          New here? <Link to="/register" className="underline" data-testid="link-register">Create a member account</Link>
+          New here? <Link to="/register" className="underline" data-testid="link-register">Create an account</Link>
         </p>
       </div>
     </div>

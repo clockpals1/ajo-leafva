@@ -30,9 +30,9 @@ export default function Register() {
           <div className="w-8 h-8 rounded-full" style={{ background: "var(--primary)" }}></div>
           <div className="font-display text-xl">Ajo</div>
         </Link>
-        <h1 className="font-display text-3xl mb-2">Create your member account</h1>
+        <h1 className="font-display text-3xl mb-2">Create your account</h1>
         <p className="text-sm mb-8" style={{ color: "var(--muted)" }}>
-          Members sign up freely. Group assignment is done by an admin.
+          Sign up to join an Ajo group once an admin assigns you or invites you.
         </p>
         <form onSubmit={submit} className="space-y-4" data-testid="register-form">
           <div>
