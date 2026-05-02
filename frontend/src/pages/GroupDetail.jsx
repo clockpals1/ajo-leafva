@@ -23,7 +23,7 @@ export default function GroupDetail() {
   const [uploading, setUploading] = useState(false);
 
   const load = () => api.get(`/groups/${id}/detail`).then(r=>setData(r.data)).catch(e=>setErr(formatErr(e?.response?.data?.detail)));
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (err) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10 text-red-700">{err}</div></div>;
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10">Loading...</div></div>;

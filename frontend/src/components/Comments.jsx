@@ -41,7 +41,7 @@ export default function Comments({ groupId }) {
       }
     } catch {}
   };
-  useEffect(() => { load(true); const t = setInterval(() => load(false), 5000); return () => clearInterval(t); }, [groupId]);
+  useEffect(() => { load(true); const t = setInterval(() => load(false), 5000); return () => clearInterval(t); }, [groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const post = async (e) => {
     e.preventDefault();

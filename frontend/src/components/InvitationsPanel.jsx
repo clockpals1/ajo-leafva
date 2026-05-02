@@ -14,7 +14,7 @@ export default function InvitationsPanel({ groupId }) {
   const [busy, setBusy] = useState(false);
 
   const load = () => api.get(`/admin/invitations?group_id=${groupId}`).then(r=>setItems(r.data));
-  useEffect(() => { load(); }, [groupId]);
+  useEffect(() => { load(); }, [groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async (e) => {
     e.preventDefault(); setErr(""); setMsg(""); setBusy(true);

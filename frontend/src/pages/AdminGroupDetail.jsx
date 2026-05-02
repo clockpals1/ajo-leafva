@@ -63,7 +63,7 @@ export default function AdminGroupDetail() {
     setData({ ...d, statuses: detail.statuses, cycles: detail.cycles });
     setUsers(u);
   };
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10">Loading...</div></div>;
 
