@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration-2 testing complete for Ajo Platform new features (DB-backed Settings, Invitations, Group Comments, group rules_text/enable_comments). 32/32 new pytest tests pass, 21/21 regression pytests still pass (53/53 total). Frontend Playwright covered: admin login, /admin/settings save+persist, create-group modal new fields, AdminGroupDetail Invitations tab create+list, Comments tab post+list, full anonymous /invite/{token} accept flow that registers a new user, joins the group, and redirects to the group page. No bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AdminGroupDetail / select dropdown", "issues": ["Console hydration warning: <span> child inside <option>. Caused by dev-time x-source-* annotation injecting a span into <option> in availableUsers map. Cosmetic only (non-prod), but worth cleaning up."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter2_features.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter2_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "settings PUT only $sets non-empty fields, so admins cannot CLEAR a Twilio cred via the UI (sending '' is filtered out at line 669). Consider treating explicit null/empty-string differently from 'not provided'.",
+    "send_email failure path returns False but doesn't surface to the admin UI; if Resend domain is not verified the invite UI still shows 'Invitation created and sent' even when delivery failed. Consider returning per-channel failure reason.",
+    "/api/invite/{token}/accept performs sign-up + cookie issue inside same handler. Race / partial-failure: if group_members.insert fails after users.insert, user is created but not in group. Wrap in a transaction or compensating delete.",
+    "Public /api/invite/{token} exposes group payment_account_details? -> Currently it does NOT (only safe fields), good. But consider also masking due_time/late_fee fields per privacy preference.",
+    "Settings collection holds plaintext Twilio auth token + Resend API key in MongoDB. At minimum, add at-rest encryption or use a secrets vault; masking only happens on GET response.",
+    "rules_text has no length limit on input - a malicious admin could store arbitrarily large content. Suggest cap at 5-10KB in Pydantic.",
+    "Comments body is trimmed to 2000 chars but enable_comments=False does not retroactively hide existing member comments from list_comments; only blocks posting. Probably intended, but worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter2_features.py"
+  ],
+  "success_rate": {
+    "backend": "100% (32/32 new + 21/21 regression = 53/53)",
+    "frontend": "100% smoke flows for new features"
+  },
+  "test_credentials": "admin@ajo.com / admin123 (super_admin) - works. Members created on the fly via /api/auth/register (TEST_iter2_member_*).",
+  "seed_data_creation": "Created TEST_RulesGroup_<ts>, TEST_NoComments_<ts> groups; TEST_iter2_member_<ts>, TEST_iter2_out_<ts>, TEST_invitee_<ts>, TEST_revoke_<ts> users; multiple invitations and comments. Settings doc was updated to brand_name=TEST_Brand_<ts>_v2 and Twilio test credentials (ACtest..., tok_test...). NOTE: Twilio creds are dummy strings - real WhatsApp send will fail silently (expected per spec since Twilio.Client init won't actually authenticate). Recommend resetting brand_name and clearing Twilio fields if running in shared env.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Two pytest files now: backend_test.py (iter1 regression, 21 tests) and test_iter2_features.py (iter2 new features, 32 tests). Run together: pytest /app/backend/tests/ -v. New data-testids added: settings-form/settings-save/settings-msg, invite-create-form/invite-email/invite-phone/invite-submit, gtab-invitations/gtab-comments, comments-section/comment-input/comment-submit, rules-section/invite-form/invite-name/invite-password/invite-accept-rules. Public invite route: /invite/:token works without auth. After accept the new user is auto-logged in and redirected to /groups/{id}. Twilio is intentionally a no-op when creds absent (sent.whatsapp=false). I left brand_name=TEST_Brand_<ts>_v2 in DB; main agent should reset to 'Ajo Platform' before demo if needed.",
+  "rca of the issue": "N/A - no bugs found in this iteration. Two initial test failures were due to incorrect response-shape expectations in my test script (admin/groups/{id} returns {group, members, cycles}, not flat group). Fixed and re-verified."
+}

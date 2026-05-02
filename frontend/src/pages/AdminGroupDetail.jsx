@@ -4,6 +4,8 @@ import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
 import { Trash2, UserPlus, Check } from "lucide-react";
+import InvitationsPanel from "../components/InvitationsPanel";
+import Comments from "../components/Comments";
 
 export default function AdminGroupDetail() {
   const { id } = useParams();
@@ -74,9 +76,9 @@ export default function AdminGroupDetail() {
         </div>
 
         <div className="flex gap-1 border-b mb-6" style={{borderColor:"var(--border)"}}>
-          {["members","ledger","payouts"].map(k => (
+          {["members","invitations","ledger","payouts","comments"].map(k => (
             <button key={k} onClick={()=>setTab(k)}
-              className={`px-4 py-2 text-sm border-b-2 -mb-px ${tab===k?"font-medium":"opacity-60"}`}
+              className={`px-4 py-2 text-sm border-b-2 -mb-px capitalize ${tab===k?"font-medium":"opacity-60"}`}
               style={{borderColor: tab===k?"var(--primary)":"transparent", color: tab===k?"var(--primary)":"var(--text)"}}
               data-testid={`gtab-${k}`}>{k}</button>
           ))}
@@ -126,6 +128,10 @@ export default function AdminGroupDetail() {
             </form>
           </div>
         )}
+
+        {tab === "invitations" && <InvitationsPanel groupId={id} />}
+
+        {tab === "comments" && <Comments groupId={id} />}
 
         {tab === "ledger" && (
           <div className="card-tactile overflow-x-auto">

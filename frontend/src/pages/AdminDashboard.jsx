@@ -20,6 +20,8 @@ export default function AdminDashboard() {
     due_day: 1, due_time: "23:59", first_payment_fee: 0,
     late_fee_amount: 500, late_fee_method: "fixed", grace_period_days: 3,
     payment_account_details: "",
+    whatsapp_group_name: "", whatsapp_invite_link: "",
+    rules_text: "", enable_comments: true,
   });
   const [createErr, setCreateErr] = useState("");
 
@@ -89,6 +91,10 @@ export default function AdminDashboard() {
           <button onClick={()=>setCreateOpen(true)} className="btn-primary inline-flex items-center gap-2" data-testid="create-group-btn">
             <Plus size={16}/> Create Ajo group
           </button>
+        </div>
+
+        <div className="mb-6 flex gap-3">
+          <Link to="/admin/settings" className="btn-secondary text-sm" data-testid="admin-settings-link">Platform settings</Link>
         </div>
 
         <div className="flex gap-1 border-b mb-8 overflow-x-auto" style={{borderColor:"var(--border)"}}>
@@ -273,6 +279,17 @@ export default function AdminDashboard() {
                 <label className="label-eyebrow block mb-1">Payment account details (recipient bank info)</label>
                 <textarea value={form.payment_account_details} onChange={e=>setForm({...form,payment_account_details:e.target.value})}
                   rows={2} className="w-full border rounded px-3 py-2" data-testid="field-account-details" />
+              </div>
+              <div className="col-span-2">
+                <label className="label-eyebrow block mb-1">Group rules (shown to invitees before joining)</label>
+                <textarea value={form.rules_text} onChange={e=>setForm({...form,rules_text:e.target.value})}
+                  rows={5} placeholder="e.g. 1. Contributions are due by midnight on the due day. 2. Late fee applies after 3-day grace period..."
+                  className="w-full border rounded px-3 py-2" data-testid="field-rules" />
+              </div>
+              <div className="col-span-2 flex items-center gap-2">
+                <input id="enable_comments" type="checkbox" checked={form.enable_comments}
+                  onChange={e=>setForm({...form, enable_comments: e.target.checked})} data-testid="field-enable-comments" />
+                <label htmlFor="enable_comments" className="text-sm">Enable member comments on this group</label>
               </div>
             </div>
             {createErr && <div className="text-red-700 text-sm mt-3" data-testid="create-error">{createErr}</div>}

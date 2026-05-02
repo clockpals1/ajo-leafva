@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
+import Comments from "../components/Comments";
 import { useAuth } from "../AuthContext";
 import { Upload } from "lucide-react";
 
@@ -78,10 +79,30 @@ export default function GroupDetail() {
           </div>
         </div>
 
+        {group.rules_text && (
+          <div className="card-tactile p-5 mb-8" data-testid="rules-card">
+            <div className="label-eyebrow mb-2">Group rules</div>
+            <pre className="text-sm whitespace-pre-wrap font-sans leading-relaxed">{group.rules_text}</pre>
+          </div>
+        )}
+
         {group.payment_account_details && (
           <div className="card-tactile p-5 mb-8">
             <div className="label-eyebrow mb-1">Payment Account Details</div>
             <pre className="text-sm whitespace-pre-wrap font-sans">{group.payment_account_details}</pre>
+          </div>
+        )}
+
+        {group.whatsapp_invite_link && (
+          <div className="card-tactile p-5 mb-8 flex items-center justify-between" data-testid="whatsapp-card">
+            <div>
+              <div className="label-eyebrow mb-1">Group Chat</div>
+              <div className="font-display text-lg">{group.whatsapp_group_name || "WhatsApp Group"}</div>
+              <div className="text-xs" style={{color:"var(--muted)"}}>Coordinate with the group on WhatsApp.</div>
+            </div>
+            <a href={group.whatsapp_invite_link} target="_blank" rel="noreferrer" className="btn-primary text-sm" data-testid="whatsapp-join">
+              Join WhatsApp group
+            </a>
           </div>
         )}
 
@@ -154,6 +175,12 @@ export default function GroupDetail() {
             </table>
           </div>
         </section>
+
+        {group.enable_comments !== false && (
+          <section className="mt-10">
+            <Comments groupId={id} />
+          </section>
+        )}
       </main>
 
       {uploadOpen && (

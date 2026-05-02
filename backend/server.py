@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from email_service import send_email
+from twilio_service import send_whatsapp
 
 # ---------------- DB & APP ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -108,6 +109,8 @@ class GroupCreate(BaseModel):
     payment_account_details: Optional[str] = ""
     whatsapp_invite_link: Optional[str] = ""
     whatsapp_group_name: Optional[str] = ""
+    rules_text: Optional[str] = ""
+    enable_comments: bool = True
 
 class AddMember(BaseModel):
     email: EmailStr
@@ -176,7 +179,7 @@ async def register(data: RegisterIn, response: Response):
     set_auth_cookie(response, token)
     await push_notification(user_id, "Welcome to Ajo Platform",
                             "Your account is created. Wait for an admin to assign you to a group.")
-    await send_email(email, "Welcome to Ajo Platform",
+    await send_email(db, email, "Welcome to Ajo Platform",
                      f"Hi {data.name},",
                      "Your member account is ready. An admin will add you to a group shortly. "
                      "You can update your bank details and profile preferences from your dashboard.",
@@ -263,6 +266,8 @@ async def create_group(data: GroupCreate, admin=Depends(require_admin)):
         "payment_account_details": data.payment_account_details,
         "whatsapp_invite_link": data.whatsapp_invite_link or "",
         "whatsapp_group_name": data.whatsapp_group_name or "",
+        "rules_text": data.rules_text or "",
+        "enable_comments": data.enable_comments,
         "status": "active",
         "created_by": admin["id"],
         "created_at": now_utc().isoformat(),
@@ -365,7 +370,7 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
     wa_html = ""
     if group.get("whatsapp_invite_link"):
         wa_html = f'<p style="margin-top:12px">Join the WhatsApp group: <a href="{group["whatsapp_invite_link"]}">{group.get("whatsapp_group_name") or "Open invite"}</a></p>'
-    await send_email(user["email"], f"You've been added to {group['name']}",
+    await send_email(db, user["email"], f"You've been added to {group['name']}",
                      f"Welcome to {group['name']}",
                      f"You are payout #{position} in this {group['frequency']} contribution. "
                      f"Contribution amount: {group['contribution_amount']}.{wa_html}",
@@ -472,6 +477,7 @@ async def decide_payment(payment_id: str, data: DecisionIn, admin=Depends(requir
         link=f"/groups/{p['group_id']}"
     )
     await send_email(
+        db,
         p["user_email"],
         f"Payment {new_status} — Cycle {p['cycle_no']}",
         f"Payment {new_status}",
@@ -506,7 +512,7 @@ async def confirm_payout(group_id: str, cycle_no: int, admin=Depends(require_adm
     recipient = await db.users.find_one({"id": cycle["payout_user_id"]}, {"_id": 0, "email": 1})
     if recipient:
         group = await db.groups.find_one({"id": group_id}, {"_id": 0, "name": 1})
-        await send_email(recipient["email"], "Payout completed",
+        await send_email(db, recipient["email"], "Payout completed",
                          "Your payout has been confirmed",
                          f"The payout for cycle {cycle_no} of <b>{group.get('name','your group')}</b> has been confirmed by the admin.",
                          cta_label="View group",
@@ -626,6 +632,312 @@ async def read_all(user=Depends(get_current_user)):
     await db.notifications.update_many({"user_id": user["id"]}, {"$set": {"read": True}})
     return {"ok": True}
 
+# ---------------- SETTINGS ----------------
+class SettingsIn(BaseModel):
+    brand_name: Optional[str] = None
+    support_email: Optional[str] = None
+    resend_api_key: Optional[str] = None
+    resend_sender: Optional[str] = None
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_whatsapp_from: Optional[str] = None
+    frontend_url: Optional[str] = None
+
+def _mask(v: str) -> str:
+    if not v: return ""
+    if len(v) <= 8: return "***"
+    return v[:4] + "***" + v[-4:]
+
+@api.get("/admin/settings")
+async def get_settings(admin=Depends(require_admin)):
+    s = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    return {
+        "brand_name": s.get("brand_name") or "Ajo Platform",
+        "support_email": s.get("support_email") or "",
+        "resend_sender": s.get("resend_sender") or "",
+        "resend_api_key_masked": _mask(s.get("resend_api_key", "")),
+        "twilio_account_sid_masked": _mask(s.get("twilio_account_sid", "")),
+        "twilio_auth_token_masked": _mask(s.get("twilio_auth_token", "")),
+        "twilio_whatsapp_from": s.get("twilio_whatsapp_from") or "",
+        "frontend_url": s.get("frontend_url") or "",
+        "has_resend": bool(s.get("resend_api_key")),
+        "has_twilio": bool(s.get("twilio_account_sid") and s.get("twilio_auth_token") and s.get("twilio_whatsapp_from")),
+    }
+
+@api.put("/admin/settings")
+async def update_settings(data: SettingsIn, admin=Depends(require_admin)):
+    update = {k: v for k, v in data.model_dump().items() if v is not None and v != ""}
+    if not update:
+        return {"ok": True, "changed": 0}
+    update["updated_at"] = now_utc().isoformat()
+    update["updated_by"] = admin["id"]
+    await db.settings.update_one({"key": "global"}, {"$set": update, "$setOnInsert": {"key": "global"}}, upsert=True)
+    await log_audit(admin["id"], "settings_updated", meta={"fields": list(update.keys())})
+    return {"ok": True, "changed": len(update)}
+
+def _get_fe_url(settings: dict, request: Request = None) -> str:
+    return settings.get("frontend_url") or os.environ.get("FRONTEND_URL", "")
+
+# ---------------- INVITATIONS ----------------
+class InviteCreate(BaseModel):
+    group_id: str
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    send_email: bool = True
+    send_whatsapp: bool = False
+    note: Optional[str] = ""
+
+@api.post("/admin/invitations")
+async def create_invite(data: InviteCreate, admin=Depends(require_admin)):
+    group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Group not found")
+    if not data.email and not data.phone:
+        raise HTTPException(400, "Provide email or phone")
+    token = uuid.uuid4().hex
+    inv = {
+        "id": str(uuid.uuid4()),
+        "token": token,
+        "group_id": data.group_id,
+        "group_name": group["name"],
+        "email": (data.email or "").lower(),
+        "phone": data.phone or "",
+        "note": data.note or "",
+        "status": "pending",
+        "created_by": admin["id"],
+        "created_at": now_utc().isoformat(),
+        "expires_at": (now_utc() + timedelta(days=14)).isoformat(),
+        "accepted_at": None,
+        "accepted_user_id": None,
+    }
+    await db.invitations.insert_one(inv.copy())
+    settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    fe = _get_fe_url(settings)
+    invite_url = f"{fe}/invite/{token}"
+    msg_body = f"You're invited to join '{group['name']}' on {settings.get('brand_name') or 'Ajo Platform'}. Accept here: {invite_url}"
+    sent = {"email": False, "whatsapp": False}
+    if data.send_email and data.email:
+        sent["email"] = await send_email(db, data.email, f"Invitation to {group['name']}",
+                         f"You're invited to {group['name']}",
+                         f"An admin has invited you to join the Ajo group <b>{group['name']}</b>. "
+                         f"Click the button to review the group rules and accept the invitation.<br><br>"
+                         f"{'<i>Note from admin: ' + data.note + '</i>' if data.note else ''}",
+                         cta_label="Review & accept", cta_link=invite_url)
+    if data.send_whatsapp and data.phone:
+        sent["whatsapp"] = await send_whatsapp(db, data.phone, msg_body)
+    await db.invitations.update_one({"id": inv["id"]}, {"$set": {"sent": sent}})
+    await log_audit(admin["id"], "invite_created", target=data.group_id,
+                    meta={"email": data.email, "phone": data.phone, "sent": sent})
+    inv["sent"] = sent
+    inv["invite_url"] = invite_url
+    return inv
+
+@api.get("/admin/invitations")
+async def list_invites(group_id: Optional[str] = None, admin=Depends(require_admin)):
+    q = {"group_id": group_id} if group_id else {}
+    items = await db.invitations.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+@api.delete("/admin/invitations/{invite_id}")
+async def revoke_invite(invite_id: str, admin=Depends(require_admin)):
+    await db.invitations.update_one({"id": invite_id}, {"$set": {"status": "revoked"}})
+    await log_audit(admin["id"], "invite_revoked", target=invite_id)
+    return {"ok": True}
+
+@api.get("/invite/{token}")
+async def view_invite(token: str):
+    inv = await db.invitations.find_one({"token": token}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Invitation not found")
+    if inv["status"] not in ("pending", "accepted"):
+        return {"status": inv["status"], "group_name": inv.get("group_name", "")}
+    group = await db.groups.find_one({"id": inv["group_id"]}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Group no longer exists")
+    expired = inv.get("expires_at") and now_utc().isoformat() > inv["expires_at"]
+    return {
+        "status": "expired" if expired else inv["status"],
+        "invitation": {
+            "token": inv["token"],
+            "email": inv["email"],
+            "phone": inv["phone"],
+            "note": inv["note"],
+            "expires_at": inv["expires_at"],
+        },
+        "group": {
+            "id": group["id"],
+            "name": group["name"],
+            "description": group.get("description", ""),
+            "contribution_amount": group["contribution_amount"],
+            "frequency": group["frequency"],
+            "total_cycles": group["total_cycles"],
+            "start_date": group["start_date"],
+            "due_day": group["due_day"],
+            "due_time": group["due_time"],
+            "first_payment_fee": group.get("first_payment_fee", 0),
+            "late_fee_amount": group.get("late_fee_amount", 0),
+            "grace_period_days": group.get("grace_period_days", 0),
+            "rules_text": group.get("rules_text", ""),
+            "whatsapp_group_name": group.get("whatsapp_group_name", ""),
+        },
+    }
+
+class AcceptIn(BaseModel):
+    name: Optional[str] = None
+    password: Optional[str] = None
+    accepted_rules: bool
+
+@api.post("/invite/{token}/accept")
+async def accept_invite(token: str, data: AcceptIn, request: Request, response: Response):
+    if not data.accepted_rules:
+        raise HTTPException(400, "You must accept the group rules to join.")
+    inv = await db.invitations.find_one({"token": token})
+    if not inv or inv["status"] != "pending":
+        raise HTTPException(400, "Invitation not available")
+    if inv.get("expires_at") and now_utc().isoformat() > inv["expires_at"]:
+        await db.invitations.update_one({"id": inv["id"]}, {"$set": {"status": "expired"}})
+        raise HTTPException(400, "Invitation expired")
+    group = await db.groups.find_one({"id": inv["group_id"]}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Group not found")
+
+    current_user = None
+    cookie_tok = request.cookies.get("access_token")
+    if cookie_tok:
+        try:
+            payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
+            current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        except Exception:
+            current_user = None
+
+    if not current_user:
+        email = inv["email"]
+        if not email:
+            raise HTTPException(400, "This invitation requires email sign-up.")
+        existing = await db.users.find_one({"email": email}, {"_id": 0})
+        if existing:
+            raise HTTPException(409, "An account with this email already exists. Please log in first, then reopen the invitation link.")
+        if not data.name or not data.password or len(data.password) < 6:
+            raise HTTPException(400, "Name and a 6+ char password are required to create an account.")
+        user_id = str(uuid.uuid4())
+        new_user = {
+            "id": user_id, "email": email, "name": data.name,
+            "password_hash": hash_pw(data.password), "role": "member",
+            "phone": inv.get("phone", ""),
+            "bank_name": "", "bank_account_number": "", "bank_account_name": "",
+            "visibility_preference": "visible", "visibility_status": "approved",
+            "created_at": now_utc().isoformat(),
+        }
+        await db.users.insert_one(new_user.copy())
+        current_user = new_user
+        tok = make_token(user_id, email, "member")
+        set_auth_cookie(response, tok)
+
+    already = await db.group_members.find_one({"group_id": group["id"], "user_id": current_user["id"]})
+    if not already:
+        count = await db.group_members.count_documents({"group_id": group["id"]})
+        if count >= group["member_limit"]:
+            raise HTTPException(400, "Group member limit reached")
+        position = count + 1
+        gm = {
+            "id": str(uuid.uuid4()),
+            "group_id": group["id"],
+            "user_id": current_user["id"],
+            "user_email": current_user["email"],
+            "user_name": current_user["name"],
+            "payout_position": position,
+            "joined_at": now_utc().isoformat(),
+            "status": "active",
+            "rules_accepted_at": now_utc().isoformat(),
+            "joined_via": "invitation",
+        }
+        await db.group_members.insert_one(gm.copy())
+        cycles = await db.cycles.find({"group_id": group["id"]}).to_list(1000)
+        today = now_utc().date()
+        docs = []
+        for c in cycles:
+            due = date.fromisoformat(c["due_date"])
+            sv = "Due" if due <= today else "Not_Due"
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "group_id": group["id"],
+                "cycle_no": c["cycle_no"],
+                "user_id": current_user["id"],
+                "status": sv,
+                "expected_amount": c["expected_amount"],
+                "paid_amount": 0,
+                "approved_at": None,
+                "approver_id": None,
+                "updated_at": now_utc().isoformat(),
+            })
+        if docs:
+            await db.member_cycle_status.insert_many(docs)
+        cycle = await db.cycles.find_one({"group_id": group["id"], "cycle_no": position})
+        if cycle and not cycle.get("payout_user_id"):
+            await db.cycles.update_one({"id": cycle["id"]}, {"$set": {"payout_user_id": current_user["id"]}})
+
+    await db.invitations.update_one({"id": inv["id"]}, {"$set": {
+        "status": "accepted",
+        "accepted_at": now_utc().isoformat(),
+        "accepted_user_id": current_user["id"],
+    }})
+    await log_audit(current_user["id"], "invite_accepted", target=group["id"])
+    await push_notification(current_user["id"], "Joined group",
+                            f"You successfully joined '{group['name']}'.",
+                            link=f"/groups/{group['id']}")
+    safe_user = {k: v for k, v in current_user.items() if k != "password_hash"}
+    return {"ok": True, "group_id": group["id"], "user": safe_user}
+
+# ---------------- GROUP COMMENTS ----------------
+class CommentIn(BaseModel):
+    body: str
+    cycle_no: Optional[int] = None
+
+@api.get("/groups/{group_id}/comments")
+async def list_comments(group_id: str, user=Depends(get_current_user)):
+    is_admin = user["role"] in ("admin", "super_admin")
+    is_member = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
+    if not is_admin and not is_member:
+        raise HTTPException(403, "Not a member of this group")
+    items = await db.group_comments.find({"group_id": group_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+@api.post("/groups/{group_id}/comments")
+async def post_comment(group_id: str, data: CommentIn, user=Depends(get_current_user)):
+    group = await db.groups.find_one({"id": group_id})
+    if not group:
+        raise HTTPException(404, "Group not found")
+    is_admin = user["role"] in ("admin", "super_admin")
+    if not group.get("enable_comments", True) and not is_admin:
+        raise HTTPException(403, "Comments are disabled by admin")
+    is_member = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
+    if not is_admin and not is_member:
+        raise HTTPException(403, "Not a member of this group")
+    if not data.body.strip():
+        raise HTTPException(400, "Empty comment")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "group_id": group_id,
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "is_admin": is_admin,
+        "cycle_no": data.cycle_no,
+        "body": data.body.strip()[:2000],
+        "created_at": now_utc().isoformat(),
+    }
+    await db.group_comments.insert_one(doc.copy())
+    return doc
+
+@api.delete("/groups/{group_id}/comments/{comment_id}")
+async def delete_comment(group_id: str, comment_id: str, user=Depends(get_current_user)):
+    c = await db.group_comments.find_one({"id": comment_id, "group_id": group_id})
+    if not c:
+        raise HTTPException(404, "Comment not found")
+    if c["user_id"] != user["id"] and user["role"] not in ("admin", "super_admin"):
+        raise HTTPException(403, "Cannot delete others' comments")
+    await db.group_comments.delete_one({"id": comment_id})
+    return {"ok": True}
+
 # ---------------- INCLUDE ROUTER ----------------
 app.include_router(api)
 
@@ -668,6 +980,48 @@ async def startup():
             "created_at": now_utc().isoformat(),
         })
         logger.info(f"Seeded admin: {admin_email}")
+    # Seed extra super_admin from env if provided
+    extra_email = os.environ.get("EXTRA_ADMIN_EMAIL", "").lower()
+    extra_pw = os.environ.get("EXTRA_ADMIN_PASSWORD", "")
+    extra_name = os.environ.get("EXTRA_ADMIN_NAME", "Admin")
+    if extra_email and extra_pw:
+        if not await db.users.find_one({"email": extra_email}):
+            await db.users.insert_one({
+                "id": str(uuid.uuid4()),
+                "email": extra_email,
+                "name": extra_name,
+                "password_hash": hash_pw(extra_pw),
+                "role": "super_admin",
+                "phone": "",
+                "bank_name": "",
+                "bank_account_number": "",
+                "bank_account_name": "",
+                "visibility_preference": "visible",
+                "visibility_status": "approved",
+                "created_at": now_utc().isoformat(),
+            })
+            logger.info(f"Seeded extra admin: {extra_email}")
+    # Seed initial settings ONCE (admin can edit via UI after)
+    existing_settings = await db.settings.find_one({"key": "global"})
+    if not existing_settings:
+        init_resend = os.environ.get("INITIAL_RESEND_API_KEY", "")
+        init_sender = os.environ.get("INITIAL_SENDER_EMAIL", "")
+        init_fe = os.environ.get("FRONTEND_URL", "")
+        await db.settings.insert_one({
+            "key": "global",
+            "brand_name": "Ajo Platform",
+            "support_email": "",
+            "resend_api_key": init_resend,
+            "resend_sender": init_sender,
+            "twilio_account_sid": "",
+            "twilio_auth_token": "",
+            "twilio_whatsapp_from": "",
+            "frontend_url": init_fe,
+            "created_at": now_utc().isoformat(),
+        })
+        logger.info("Seeded initial settings doc")
+    await db.invitations.create_index("token", unique=True)
+    await db.group_comments.create_index([("group_id", 1), ("created_at", -1)])
 
 @app.on_event("shutdown")
 async def shutdown():
