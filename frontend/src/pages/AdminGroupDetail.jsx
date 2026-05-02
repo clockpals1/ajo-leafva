@@ -7,6 +7,43 @@ import { Trash2, UserPlus, Check } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
+function BroadcastBox({ groupId }) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async (e) => {
+    e.preventDefault();
+    if (!title.trim() || !body.trim()) return;
+    setBusy(true); setMsg("");
+    try {
+      await api.post("/admin/broadcast", { title, body, group_id: groupId });
+      setMsg("Notification sent to all group members.");
+      setTitle(""); setBody("");
+    } catch (err) {
+      setMsg(formatErr(err?.response?.data?.detail) || "Failed");
+    } finally { setBusy(false); }
+  };
+  return (
+    <form onSubmit={send} className="card-tactile p-6" data-testid="broadcast-form">
+      <h3 className="font-display text-xl mb-3">Broadcast notification</h3>
+      <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Sends an in-app notification to every active member of this group.</p>
+      <div className="grid md:grid-cols-3 gap-3">
+        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Title"
+          className="border rounded px-3 py-2 bg-white md:col-span-1" data-testid="broadcast-title" />
+        <input value={body} onChange={e=>setBody(e.target.value)} placeholder="Message body"
+          className="border rounded px-3 py-2 bg-white md:col-span-2" data-testid="broadcast-body" />
+      </div>
+      <div className="flex items-center justify-between mt-3">
+        <div className="text-sm" style={{color:"var(--primary)"}} data-testid="broadcast-msg">{msg}</div>
+        <button disabled={busy} className="btn-primary text-sm" data-testid="broadcast-send">
+          {busy ? "Sending…" : "Send to group"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export default function AdminGroupDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
@@ -131,7 +168,12 @@ export default function AdminGroupDetail() {
 
         {tab === "invitations" && <InvitationsPanel groupId={id} />}
 
-        {tab === "comments" && <Comments groupId={id} />}
+        {tab === "comments" && (
+          <div className="space-y-6">
+            <BroadcastBox groupId={id} />
+            <Comments groupId={id} />
+          </div>
+        )}
 
         {tab === "ledger" && (
           <div className="card-tactile overflow-x-auto">

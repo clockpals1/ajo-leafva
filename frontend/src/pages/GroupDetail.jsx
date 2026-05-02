@@ -166,7 +166,7 @@ export default function GroupDetail() {
                 {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => (
                   <tr key={m.id} className="border-t" style={{borderColor:"var(--border)"}}>
                     <td className="px-4 py-3 font-display">#{m.payout_position}</td>
-                    <td className="px-4 py-3">{m.user_name}</td>
+                    <td className="px-4 py-3">{m.display_name || m.user_name}</td>
                     {isAdmin && <td className="px-4 py-3" style={{color:"var(--muted)"}}>{m.user_email}</td>}
                     <td className="px-4 py-3" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
                   </tr>

@@ -91,6 +91,8 @@ class ProfileUpdate(BaseModel):
     bank_account_number: Optional[str] = None
     bank_account_name: Optional[str] = None
     visibility_preference: Optional[Literal["visible", "limited", "hidden"]] = None
+    display_name: Optional[str] = None
+    use_alias: Optional[bool] = None
 
 class GroupCreate(BaseModel):
     name: str
@@ -152,6 +154,22 @@ async def push_notification(user_id: str, title: str, body: str, link: str = "")
         "read": False,
         "timestamp": now_utc().isoformat(),
     })
+
+async def notify_group(group_id: str, title: str, body: str, link: str = "", exclude: str = ""):
+    """Broadcast a notification to every active member of a group."""
+    members = await db.group_members.find({"group_id": group_id, "status": {"$ne": "removed"}}).to_list(1000)
+    for m in members:
+        if m["user_id"] == exclude:
+            continue
+        await push_notification(m["user_id"], title, body, link)
+
+def display_name_for(user_doc: dict, viewer_is_admin: bool) -> str:
+    """Return the name to display. Admins always see the real name."""
+    if viewer_is_admin:
+        return user_doc.get("name", "Member")
+    if user_doc.get("use_alias") and user_doc.get("display_name"):
+        return user_doc["display_name"]
+    return user_doc.get("name", "Member")
 
 # ---------------- AUTH ROUTES ----------------
 @api.post("/auth/register")
@@ -367,6 +385,11 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
     await push_notification(user["id"], "Added to a group",
                             f"You have been added to '{group['name']}' (Payout #{position}).",
                             link=f"/groups/{group_id}")
+    # Broadcast to existing members
+    public_name = display_name_for(user, False)
+    await notify_group(group_id, "New member joined",
+                       f"{public_name} has joined '{group['name']}'.",
+                       link=f"/groups/{group_id}", exclude=user["id"])
     wa_html = ""
     if group.get("whatsapp_invite_link"):
         wa_html = f'<p style="margin-top:12px">Join the WhatsApp group: <a href="{group["whatsapp_invite_link"]}">{group.get("whatsapp_group_name") or "Open invite"}</a></p>'
@@ -476,6 +499,12 @@ async def decide_payment(payment_id: str, data: DecisionIn, admin=Depends(requir
         f"Your payment for cycle {p['cycle_no']} was {new_status}." + (f" Note: {data.note}" if data.note else ""),
         link=f"/groups/{p['group_id']}"
     )
+    if data.decision == "approve":
+        payer = await db.users.find_one({"id": p["user_id"]}, {"_id": 0}) or {}
+        public_name = display_name_for(payer, False)
+        await notify_group(p["group_id"], "Contribution received",
+                           f"{public_name} contributed for cycle {p['cycle_no']}.",
+                           link=f"/groups/{p['group_id']}", exclude=p["user_id"])
     await send_email(
         db,
         p["user_email"],
@@ -509,9 +538,13 @@ async def confirm_payout(group_id: str, cycle_no: int, admin=Depends(require_adm
     await push_notification(cycle["payout_user_id"], "Payout completed",
                             f"Your payout for cycle {cycle_no} has been confirmed.",
                             link=f"/groups/{group_id}")
-    recipient = await db.users.find_one({"id": cycle["payout_user_id"]}, {"_id": 0, "email": 1})
+    recipient = await db.users.find_one({"id": cycle["payout_user_id"]}, {"_id": 0})
     if recipient:
         group = await db.groups.find_one({"id": group_id}, {"_id": 0, "name": 1})
+        public_name = display_name_for(recipient, False)
+        await notify_group(group_id, "Payout completed",
+                           f"{public_name} received the cycle {cycle_no} payout.",
+                           link=f"/groups/{group_id}", exclude=cycle["payout_user_id"])
         await send_email(db, recipient["email"], "Payout completed",
                          "Your payout has been confirmed",
                          f"The payout for cycle {cycle_no} of <b>{group.get('name','your group')}</b> has been confirmed by the admin.",
@@ -541,12 +574,22 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
         raise HTTPException(403, "Not a member of this group")
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
     members = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
-    # attach payout names
-    user_map = {}
+    # Resolve display names (alias for non-admin viewers if user opts in)
+    member_user_ids = [m["user_id"] for m in members]
+    user_docs = await db.users.find({"id": {"$in": member_user_ids}},
+                                    {"_id": 0, "id": 1, "name": 1, "display_name": 1, "use_alias": 1,
+                                     "visibility_preference": 1}).to_list(1000)
+    udoc_map = {u["id"]: u for u in user_docs}
     for m in members:
-        user_map[m["user_id"]] = m["user_name"]
+        u = udoc_map.get(m["user_id"], {})
+        m["display_name"] = display_name_for(u, is_admin)
+        # privacy: hide real name from non-admin if "hidden"
+        if not is_admin and u.get("visibility_preference") == "hidden":
+            m["user_email"] = ""
     for c in cycles:
-        c["payout_user_name"] = user_map.get(c.get("payout_user_id"), None)
+        uid = c.get("payout_user_id")
+        u = udoc_map.get(uid, {})
+        c["payout_user_name"] = display_name_for(u, is_admin) if u else None
     if is_admin:
         my_status = await db.member_cycle_status.find({"group_id": group_id}, {"_id": 0}).to_list(5000)
     else:
@@ -899,7 +942,17 @@ async def list_comments(group_id: str, user=Depends(get_current_user)):
     is_member = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
     if not is_admin and not is_member:
         raise HTTPException(403, "Not a member of this group")
-    items = await db.group_comments.find({"group_id": group_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    items = await db.group_comments.find({"group_id": group_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    if items:
+        user_ids = list({c["user_id"] for c in items})
+        docs = await db.users.find({"id": {"$in": user_ids}},
+                                   {"_id": 0, "id": 1, "name": 1, "display_name": 1, "use_alias": 1}).to_list(1000)
+        dmap = {u["id"]: u for u in docs}
+        for c in items:
+            u = dmap.get(c["user_id"], {})
+            c["user_name"] = display_name_for(u, is_admin)
+            # tag if current viewer is author
+            c["is_self"] = (c["user_id"] == user["id"])
     return items
 
 @api.post("/groups/{group_id}/comments")
@@ -915,6 +968,7 @@ async def post_comment(group_id: str, data: CommentIn, user=Depends(get_current_
         raise HTTPException(403, "Not a member of this group")
     if not data.body.strip():
         raise HTTPException(400, "Empty comment")
+    # stored with author's real name; display layer resolves alias per viewer
     doc = {
         "id": str(uuid.uuid4()),
         "group_id": group_id,
@@ -926,6 +980,13 @@ async def post_comment(group_id: str, data: CommentIn, user=Depends(get_current_
         "created_at": now_utc().isoformat(),
     }
     await db.group_comments.insert_one(doc.copy())
+    # broadcast: light notification when admin posts or a cycle-tagged message
+    if is_admin:
+        await notify_group(group_id, "Admin posted in chat",
+                           data.body.strip()[:120], link=f"/groups/{group_id}", exclude=user["id"])
+    # apply display-name for the response (so sender sees it consistent)
+    doc["user_name"] = display_name_for(user, is_admin)
+    doc["is_self"] = True
     return doc
 
 @api.delete("/groups/{group_id}/comments/{comment_id}")
@@ -937,6 +998,24 @@ async def delete_comment(group_id: str, comment_id: str, user=Depends(get_curren
         raise HTTPException(403, "Cannot delete others' comments")
     await db.group_comments.delete_one({"id": comment_id})
     return {"ok": True}
+
+class BroadcastIn(BaseModel):
+    title: str
+    body: str
+    group_id: Optional[str] = None  # None = all groups
+
+@api.post("/admin/broadcast")
+async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
+    """Admin broadcasts a notification to all members of one group (or all groups)."""
+    if data.group_id:
+        await notify_group(data.group_id, data.title, data.body, link=f"/groups/{data.group_id}")
+        return {"ok": True, "scope": "group"}
+    # all groups: iterate
+    groups = await db.groups.find({"status": "active"}).to_list(1000)
+    for g in groups:
+        await notify_group(g["id"], data.title, data.body, link=f"/groups/{g['id']}")
+    await log_audit(admin["id"], "admin_broadcast", meta={"scope": "all" if not data.group_id else data.group_id})
+    return {"ok": True, "scope": "all", "groups": len(groups)}
 
 # ---------------- INCLUDE ROUTER ----------------
 app.include_router(api)
