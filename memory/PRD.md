@@ -1,78 +1,66 @@
 # Ajo / ROSCA Platform — PRD
 
 ## Original problem statement
-Production-ready Ajo / Contribution / ROSCA management web application with strong admin-controlled workflow, transparent payment tracking, approval logic, audit trails, and reliable data model. Roles: Super Admin, Group Admin, Member. Only admins create groups and add members. Members upload payment proof; admins approve. Each member has 12 distinct monthly status states per cycle. Visibility approval, configurable rules, audit logs, ledger.
+Production-ready Ajo / Contribution / ROSCA management web application. Admins control group creation, membership, approvals; members sign up, contribute, upload proofs. 12-state monthly cycle ledger, visibility rules, audit log, configurable rules, email/WhatsApp invitations.
 
 ## Architecture
-- **Stack**: FastAPI + MongoDB (motor) + React 19 + Tailwind + shadcn UI
-- **Auth**: JWT in httpOnly cookies, bcrypt password hashing, role-based dependencies (require_admin)
-- **Storage**: Receipt images stored as base64 data URLs in `payments` collection (MVP)
-- **Routing**: All backend routes under `/api`, frontend uses `REACT_APP_BACKEND_URL`
+- FastAPI + MongoDB (motor) + React 19 + Tailwind + shadcn
+- JWT httpOnly cookies, bcrypt, RBAC (`require_admin`)
+- **All platform config in DB** — `settings` collection, editable from Admin → Settings UI
+- Email via Resend (DB-backed key + sender)
+- WhatsApp via Twilio (DB-backed SID/token/from number)
+- Receipts stored as base64 data-URLs (MVP)
 
 ## User personas
-1. **Platform Admin / Super Admin** — full platform control, seeded as `admin@ajo.com / admin123`
-2. **Group Admin** — manages groups, approves payments and payouts
-3. **Member** — signs up freely, contributes to assigned groups, uploads receipts
+1. Platform/Super Admin — full control
+2. Group Admin — approves, manages groups
+3. Member — signs up or joins via invite, uploads proof, comments
 
-## Core entities
-users, groups, group_members, cycles, member_cycle_status, payments, visibility_requests, notifications, audit_logs
+## Core collections
+users, groups, group_members, cycles, member_cycle_status, payments, visibility_requests, notifications, audit_logs, **settings**, **invitations**, **group_comments**
 
-## Monthly status lifecycle (12 states)
-Not_Due → Due → Submitted → Paid (approved) | Rejected (resubmit) | Partial | Overdue → Overdue_Penalty → Carried_Forward; Payout_Eligible → Payout_Completed
+## Implemented
 
-## Implemented (2026-02-XX, iteration 1)
-### Backend
-- JWT auth: register, login, logout, /me; bcrypt; httpOnly cookie
-- Admin seeded on startup (`admin@ajo.com / admin123`)
-- Group CRUD: create with auto-cycle generation (12 month-friendly periods), list, detail, archive support
-- Member management: add (existing user by email) with payout position, remove
-- Cycle status auto-generated per member on join
-- Payment workflow: upload (base64 receipt), pending queue, approve/reject with cycle status transition
-- Payout confirmation per cycle
-- Visibility requests with admin approval
-- Audit logs with actor info
-- Per-user notifications (in-app log)
-- Dashboard stats (groups, members, pending, overdue, due, payouts, total collections)
-- RBAC: members blocked from admin endpoints (verified by tests)
-- Indexes: users.email unique, group_members composite unique, cycles + member_cycle_status composite unique
+### Iteration 1 (MVP core)
+Auth (register/login/logout/me), group CRUD + auto cycle generation, member add/remove, payment upload + approve/reject, payout confirmation, visibility requests, per-user notifications, dashboard stats, audit logs, full RBAC. 12 status badges wired end-to-end.
 
-### Frontend
-- Organic Earthy theme (#FDFBF7 / #1E3F33 / #C05A3A / #D99C3D), Outfit + Manrope fonts
-- Landing with hero image, features grid, CTAs
-- Auth pages (login, register) with cookie-based session
-- Member dashboard: assigned groups, payment history, stats
-- Group detail (member): cycles table with personal status, upload payment proof modal
-- Admin dashboard: tabs (Overview, Groups, Approvals, Members, Audit Log) with KPI cards, create group modal
-- Admin group detail: members table, add member dropdown, ledger matrix (members × cycles), payouts tab
-- Receipt review modal with image preview + approve/reject + decision note
-- 12 status badge variants per design guidelines
-- Notifications page, profile page with bank details + visibility request
+### Iteration 2 (this release)
+- **DB-backed settings** — brand, support email, Resend API key/sender, Twilio SID/token/from, frontend URL. Admin Settings page with masked secrets, live `has_resend`/`has_twilio` status.
+- **Invitations system** — admin sends invite via email + optional WhatsApp; token link; public `/invite/:token` onboarding page showing group rules; rules must be accepted before join; auto-creates account for new emails, auto-joins logged-in users; list/revoke from admin; email subject/CTA linked back to FE URL.
+- **Group rules & comments** — `rules_text` and `enable_comments` on groups. Shown on invite page and member group page. Comments feed per group with optional cycle_no; admins can always post; members blocked if comments disabled; owner + admin can delete.
+- **Email events** — welcome, added-to-group, payment approved/rejected, payout completed, invitation (all via DB settings, non-blocking, silent-fail logged).
+- **WhatsApp event** — invitation (more events easy to add once Twilio creds in place).
+- **Extra super_admin seeded** — `sunday@isunday.me / Ronkus123@`.
 
-## Test results (iteration 1)
-- Backend: **21/21 pytest passing** (auth, groups, members, payments, payouts, visibility, RBAC)
-- Frontend smoke: landing, login, admin dashboard, create group modal verified
+## Test results
+- Iteration 2: **32/32 new pytest tests + 21/21 regression = 53/53 passing**.
+- Frontend smoke: admin login, settings save, create-group with rules, invitations panel create+list, public invite → signup → join → redirect, comments feed all verified.
 
-## Backlog (P0 / P1 / P2)
+## Test credentials
+- Admin: `admin@ajo.com / admin123` (super_admin)
+- Admin: `sunday@isunday.me / Ronkus123@` (super_admin)
+- Members: create via `/register` or accept an invite
+
+## Known limitations & future work
+
 ### P1
-- Email notifications (Resend/SendGrid integration)
-- Late-fee auto-calculation cron (currently stored but not auto-applied)
-- Auto Overdue/Overdue_Penalty status transition based on due date + grace period
-- Object Storage migration for receipts (base64 grows MongoDB payload)
-- Visibility request UI for admin (queue + approve buttons) — backend done, UI minimal
-- CSV export for ledger and payment history
+- Secrets at rest: Twilio/Resend tokens stored plaintext in DB. Future: encrypt column or external vault.
+- Clearing a setting via UI: empty string is ignored (treated as "no change"). Add explicit null support.
+- Retroactive comments hide when `enable_comments` toggled off (currently still visible — intentional for history).
+- Rules_text: no size cap yet; add ~10KB Pydantic limit.
+- Invitation accept: no transactional wrap — if group_members insert fails mid-signup, user is created without membership.
 
 ### P2
-- Brute-force login lockout (currently no rate limit)
-- Group archive / suspend UI
-- Payment partial / carried-forward logic
-- Push notifications (web push)
-- Multi-currency support (currently NGN hardcoded in frontend formatter)
-- Group rule version history (currently single config per group)
+- Automatic Overdue / Overdue_Penalty transitions on due-date passage
+- Late-fee auto-apply after grace period
+- CSV export for ledger & payments
+- Object Storage for receipts (migrate from base64)
+- Brute-force login lockout
+- Multi-currency (currently NGN formatter hardcoded on frontend)
 - Two-factor auth for admins
-- Idempotency on payment decision endpoint
 
 ## Next tasks
-1. Wire up email notifications via Resend
-2. Implement automatic Overdue transition (background scheduler or per-request compute)
-3. Add CSV export buttons in admin ledger
-4. Add visibility request review UI in admin tabs
+1. Wire Twilio creds via admin UI (once user provides) → WhatsApp notifications for payment events
+2. Secrets encryption at rest
+3. Overdue transition scheduler
+4. CSV export
