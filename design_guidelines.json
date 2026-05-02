@@ -1,0 +1,97 @@
+{
+  "theme": "light",
+  "archetype": "Archetype 1 (Organic & Earthy)",
+  "core_principles": [
+    "Fusion over Imitation: Blend community warmth (Ajo) with strict financial structural grids.",
+    "Emotion First: The platform must evoke Trust, Community, and Growth. Not just raw data.",
+    "Negative Space: Use generous padding (p-8, p-12) to reduce financial cognitive load.",
+    "Contrast: Soft backgrounds with sharp 1px borders and high-contrast typography."
+  ],
+  "colors": {
+    "background": "#FDFBF7",
+    "surface": "#F4F1EA",
+    "primary": "#1E3F33",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#C05A3A",
+    "secondary_foreground": "#FFFFFF",
+    "accent": "#D99C3D",
+    "neutral_text": "#2C2B29",
+    "muted_text": "#7B7A77",
+    "border": "rgba(44, 43, 41, 0.1)"
+  },
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Manrope",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-medium",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-medium",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium",
+      "body": "text-base leading-relaxed",
+      "labels": "text-xs tracking-[0.2em] uppercase font-bold text-[#7B7A77]"
+    }
+  },
+  "components": {
+    "cards": {
+      "style": "Neumorphism (Tactile) Variant: Flat background (#F4F1EA) on (#FDFBF7), 1px solid border-black/5, subtle shadow-sm. No heavy box-shadows. Sharp 4px or 8px border-radius max."
+    },
+    "buttons": {
+      "primary": "bg-[#1E3F33] text-white hover:bg-[#152e25] transition-colors rounded-md px-6 py-3",
+      "secondary": "bg-transparent border border-[#1E3F33] text-[#1E3F33] hover:bg-[#F4F1EA] transition-colors rounded-md px-6 py-3"
+    },
+    "tables": {
+      "style": "Cardless, dense layout. Zebra striping using transparent and #F4F1EA. Right-aligned numbers. Sticky headers with backdrop-blur."
+    },
+    "status_badges": {
+      "Not_Due": "bg-gray-100 text-gray-600 border border-gray-200",
+      "Due": "bg-orange-50 text-orange-700 border border-orange-200",
+      "Submitted": "bg-blue-50 text-blue-700 border border-blue-200",
+      "Under_Review": "bg-indigo-50 text-indigo-700 border border-indigo-200",
+      "Paid": "bg-[#1E3F33] text-white",
+      "Partial": "bg-yellow-50 text-yellow-800 border border-yellow-200",
+      "Rejected": "bg-red-50 text-red-700 border border-red-200",
+      "Overdue": "bg-red-100 text-red-800 font-medium",
+      "Overdue_Penalty": "bg-red-50 text-red-900 border border-red-500 font-bold",
+      "Carried_Forward": "bg-[#F4F1EA] text-[#8C6C52] border border-[#8C6C52]/30",
+      "Payout_Eligible": "bg-[#E8EFE5] text-[#1E3F33] border border-[#1E3F33]/20 font-medium",
+      "Payout_Completed": "bg-[#D99C3D] text-white font-bold"
+    }
+  },
+  "layout_spacing": {
+    "dashboard_grid": "The 'Control Room' Grid: grid-cols-1 md:grid-cols-3 lg:grid-cols-4 with gap-6. Dense data correlation.",
+    "marketing_grid": "The 'Bento' Grid: Asymmetrical spans, gap-8 to gap-12, overlapping sections.",
+    "padding_philosophy": "Generous spacing. p-8 to p-12 for sections. 2-3x typical spacing."
+  },
+  "media": {
+    "hero_image": {
+      "url": "https://images.unsplash.com/photo-1761666519882-59ab0dbe5059?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2MzR8MHwxfHNlYXJjaHwzfHxhZnJpY2FuJTIwY29tbXVuaXR5JTIwc21pbGluZyUyMHRvZ2V0aGVyfGVufDB8fHx8MTc3Nzc1NDczM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "African community sitting together outdoors, representing the 'Ajo' communal aspect. Apply bg-black/30 overlay if text is on top."
+    },
+    "feature_image": {
+      "url": "https://images.unsplash.com/photo-1758691032009-ed34ff84d0c8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzh8MHwxfHNlYXJjaHwzfHxwZXJzb24lMjBob2xkaW5nJTIwcGhvbmUlMjBmaW5hbmNlfGVufDB8fHx8MTc3Nzc1NDczM3ww&ixlib=rb-4.1.0&q=85",
+      "description": "Person using phone and card, representing seamless financial transactions."
+    },
+    "logo_icon": {
+      "url": "https://images.unsplash.com/photo-1741463185216-791d4a4f1b2f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwZ2VvbWV0cmljJTIwbG9nbyUyMGdyZWVufGVufDB8fHx8MTc3Nzc1NDc0NXww&ixlib=rb-4.1.0&q=85",
+      "description": "Minimalist geometric concentric green circles logo representing cyclical community finance."
+    },
+    "payout_celebration_bg": {
+      "url": "https://images.pexels.com/photos/5908235/pexels-photo-5908235.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Abstract vibrant pattern to be used as a subtle background for 'Payout Eligible/Completed' cards."
+    }
+  },
+  "motion_and_interactions": {
+    "hover_states": "All buttons must use distinct text colors on hover. focus:ring-2 focus:ring-[#C05A3A].",
+    "transitions": "transition: transform 0.2s ease, opacity 0.2s ease. NO universal transition: all.",
+    "micro_interactions": "Hover slight lift (-translate-y-1) for dashboard widgets."
+  },
+  "testing_attributes": "All interactive elements MUST include data-testid attributes (e.g., data-testid='upload-proof-button').",
+  "instructions_to_main_agent": [
+    "Use Shadcn UI for forms, tables, dialogs (Receipt review modal), and dropdowns. Customize heavily to match the Organic & Earthy archetype (remove default borders/shadows, apply #F4F1EA surface color).",
+    "The Receipt Review Modal must display the image side-by-side with the approval form (Approve/Reject + Notes) using a grid-cols-2 layout.",
+    "For the 12 Monthly Status timelines, use a horizontal stepper or grid representation using the exact classes provided in 'status_badges'.",
+    "Use pure HTML+Tailwind (No Shadcn cards) for marketing sections to allow bento/asymmetrical grids.",
+    "Install and use 'lucide-react' for all icons. Avoid importing other icon libraries unless strictly necessary.",
+    "The Monthly Contribution Tracker should be a dense Matrix (Members x Cycles). Use sticky headers and horizontal scroll. Right-align all currency.",
+    "Ensure the hero section uses the 'hero_image' URL with an overlay gradient."
+  ]
+}
