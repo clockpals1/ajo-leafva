@@ -14,6 +14,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+from email_service import send_email
 
 # ---------------- DB & APP ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -105,6 +106,8 @@ class GroupCreate(BaseModel):
     late_fee_method: Literal["fixed", "percent"] = "fixed"
     grace_period_days: int = 0
     payment_account_details: Optional[str] = ""
+    whatsapp_invite_link: Optional[str] = ""
+    whatsapp_group_name: Optional[str] = ""
 
 class AddMember(BaseModel):
     email: EmailStr
@@ -173,6 +176,12 @@ async def register(data: RegisterIn, response: Response):
     set_auth_cookie(response, token)
     await push_notification(user_id, "Welcome to Ajo Platform",
                             "Your account is created. Wait for an admin to assign you to a group.")
+    await send_email(email, "Welcome to Ajo Platform",
+                     f"Hi {data.name},",
+                     "Your member account is ready. An admin will add you to a group shortly. "
+                     "You can update your bank details and profile preferences from your dashboard.",
+                     cta_label="Open dashboard",
+                     cta_link=f"{os.environ.get('FRONTEND_URL','')}/dashboard")
     user.pop("password_hash", None)
     return {"user": user, "token": token}
 
@@ -252,6 +261,8 @@ async def create_group(data: GroupCreate, admin=Depends(require_admin)):
         "late_fee_method": data.late_fee_method,
         "grace_period_days": data.grace_period_days,
         "payment_account_details": data.payment_account_details,
+        "whatsapp_invite_link": data.whatsapp_invite_link or "",
+        "whatsapp_group_name": data.whatsapp_group_name or "",
         "status": "active",
         "created_by": admin["id"],
         "created_at": now_utc().isoformat(),
@@ -351,6 +362,15 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
     await push_notification(user["id"], "Added to a group",
                             f"You have been added to '{group['name']}' (Payout #{position}).",
                             link=f"/groups/{group_id}")
+    wa_html = ""
+    if group.get("whatsapp_invite_link"):
+        wa_html = f'<p style="margin-top:12px">Join the WhatsApp group: <a href="{group["whatsapp_invite_link"]}">{group.get("whatsapp_group_name") or "Open invite"}</a></p>'
+    await send_email(user["email"], f"You've been added to {group['name']}",
+                     f"Welcome to {group['name']}",
+                     f"You are payout #{position} in this {group['frequency']} contribution. "
+                     f"Contribution amount: {group['contribution_amount']}.{wa_html}",
+                     cta_label="View group",
+                     cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{group_id}")
     return gm
 
 @api.delete("/admin/groups/{group_id}/members/{user_id}")
@@ -451,6 +471,15 @@ async def decide_payment(payment_id: str, data: DecisionIn, admin=Depends(requir
         f"Your payment for cycle {p['cycle_no']} was {new_status}." + (f" Note: {data.note}" if data.note else ""),
         link=f"/groups/{p['group_id']}"
     )
+    await send_email(
+        p["user_email"],
+        f"Payment {new_status} — Cycle {p['cycle_no']}",
+        f"Payment {new_status}",
+        f"Your payment of {p['amount']} for cycle {p['cycle_no']} was <b>{new_status}</b>." +
+        (f"<br><br>Admin note: {data.note}" if data.note else ""),
+        cta_label="View group",
+        cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{p['group_id']}"
+    )
     return {"ok": True, "status": new_status}
 
 # ---------------- PAYOUTS ----------------
@@ -474,6 +503,14 @@ async def confirm_payout(group_id: str, cycle_no: int, admin=Depends(require_adm
     await push_notification(cycle["payout_user_id"], "Payout completed",
                             f"Your payout for cycle {cycle_no} has been confirmed.",
                             link=f"/groups/{group_id}")
+    recipient = await db.users.find_one({"id": cycle["payout_user_id"]}, {"_id": 0, "email": 1})
+    if recipient:
+        group = await db.groups.find_one({"id": group_id}, {"_id": 0, "name": 1})
+        await send_email(recipient["email"], "Payout completed",
+                         "Your payout has been confirmed",
+                         f"The payout for cycle {cycle_no} of <b>{group.get('name','your group')}</b> has been confirmed by the admin.",
+                         cta_label="View group",
+                         cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{group_id}")
     return {"ok": True}
 
 # ---------------- MEMBER VIEWS ----------------
