@@ -38,11 +38,6 @@ let webpackConfig = {
     },
     configure: (webpackConfig) => {
 
-      // Remove ForkTsCheckerWebpackPlugin — not needed (no TypeScript), conflicts with ajv@8
-      webpackConfig.plugins = webpackConfig.plugins.filter(
-        (p) => p.constructor && p.constructor.name !== 'ForkTsCheckerWebpackPlugin'
-      );
-
       // Add ignored patterns to reduce watched directories
         webpackConfig.watchOptions = {
           ...webpackConfig.watchOptions,
