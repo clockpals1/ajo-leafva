@@ -21,6 +21,13 @@ jobs:
         working-directory: frontend
         run: npm install --legacy-peer-deps
 
+      - name: Patch fork-ts-checker ajv compatibility
+        working-directory: frontend
+        run: |
+          mkdir -p node_modules/fork-ts-checker-webpack-plugin/node_modules
+          cd node_modules/fork-ts-checker-webpack-plugin
+          npm install ajv@6.12.6 --legacy-peer-deps --no-save
+
       - name: Build
         working-directory: frontend
         env:
