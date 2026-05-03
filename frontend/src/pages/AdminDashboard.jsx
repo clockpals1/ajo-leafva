@@ -4,7 +4,7 @@ import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import {
   Plus, Users, UserCheck, Clock, AlertTriangle, TrendingUp,
-  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus,
+  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X,
 } from "lucide-react";
 
 const ACTION_COLORS = {
@@ -531,60 +531,168 @@ export default function AdminDashboard() {
 
       {/* ── Create Group Modal ── */}
       {createOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 z-50 overflow-y-auto" onClick={()=>setCreateOpen(false)}>
-          <form onClick={e=>e.stopPropagation()} onSubmit={submitCreate}
-            className="bg-white rounded-xl max-w-2xl w-full p-5 sm:p-6 my-6 shadow-2xl" data-testid="create-group-modal">
-            <h3 className="font-display text-xl sm:text-2xl mb-1">Create Ajo Group</h3>
-            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Configure settings. You can invite members after creation.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {[
-                ["name","Group name","text",true],
-                ["description","Description","text",false],
-                ["contribution_amount","Contribution (₦)","number",true],
-                ["frequency","Frequency",null,true,["monthly","weekly","biweekly"]],
-                ["start_date","Start date","date",true],
-                ["total_cycles","Total cycles","number",true],
-                ["member_limit","Member limit","number",true],
-                ["due_day","Due day (1–28)","number",true],
-                ["due_time","Due time","time",true],
-                ["first_payment_fee","First payment fee (₦)","number",false],
-                ["late_fee_amount","Late fee (₦)","number",false],
-                ["late_fee_method","Late fee method",null,true,["fixed","percent"]],
-                ["grace_period_days","Grace period (days)","number",false],
-              ].map(([k,l,t,req,opts]) => (
-                <div key={k} className={k==="description" ? "sm:col-span-2" : ""}>
-                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>{l}</label>
-                  {opts
-                    ? <select required={req} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}
-                        className="w-full border rounded px-3 py-2 bg-white text-sm" data-testid={`field-${k}`}>
-                        {opts.map(o=><option key={o} value={o}>{o}</option>)}
+        <div
+          className="fixed inset-0 z-50 flex flex-col sm:items-center sm:justify-start sm:pt-8 sm:px-4 sm:pb-4 sm:bg-black/40"
+          onClick={()=>setCreateOpen(false)}
+        >
+          <form
+            onClick={e=>e.stopPropagation()}
+            onSubmit={submitCreate}
+            className="flex flex-col bg-white w-full h-full sm:h-auto sm:max-h-[90vh] sm:rounded-2xl sm:shadow-2xl sm:max-w-xl overflow-hidden"
+            data-testid="create-group-modal"
+          >
+            {/* Sticky header */}
+            <div className="flex items-start justify-between px-5 py-4 border-b flex-shrink-0" style={{borderColor:"var(--border)"}}>
+              <div>
+                <h3 className="font-display text-xl">Create Ajo Group</h3>
+                <p className="text-xs mt-0.5" style={{color:"var(--muted)"}}>You can invite members after creation.</p>
+              </div>
+              <button type="button" onClick={()=>setCreateOpen(false)}
+                className="p-2 rounded-lg hover:bg-gray-100 -mt-1 -mr-1 flex-shrink-0">
+                <X size={18}/>
+              </button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="overflow-y-auto flex-1 px-5 py-5 space-y-6">
+
+              {/* Section: Basic Info */}
+              <div>
+                <div className="label-eyebrow mb-3">Basic Info</div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="form-label">Group name *</label>
+                    <input required type="text" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}
+                      className="form-input" data-testid="field-name" placeholder="e.g. Lagos Women's Ajo 2026" />
+                  </div>
+                  <div>
+                    <label className="form-label">Description</label>
+                    <input type="text" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}
+                      className="form-input" data-testid="field-description" placeholder="Short description (optional)" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label">Frequency *</label>
+                      <select required value={form.frequency} onChange={e=>setForm({...form,frequency:e.target.value})}
+                        className="form-input bg-white" data-testid="field-frequency">
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Bi-weekly</option>
                       </select>
-                    : <input type={t} required={req} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}
-                        className="w-full border rounded px-3 py-2 text-sm" data-testid={`field-${k}`} />
-                  }
+                    </div>
+                    <div>
+                      <label className="form-label">Start date *</label>
+                      <input required type="date" value={form.start_date} onChange={e=>setForm({...form,start_date:e.target.value})}
+                        className="form-input" data-testid="field-start_date" />
+                    </div>
+                  </div>
                 </div>
-              ))}
-              <div className="sm:col-span-2">
-                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Payment account details (bank info for payout recipient)</label>
-                <textarea value={form.payment_account_details} onChange={e=>setForm({...form,payment_account_details:e.target.value})}
-                  rows={2} className="w-full border rounded px-3 py-2 text-sm" data-testid="field-account-details" />
               </div>
-              <div className="sm:col-span-2">
-                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Group rules (shown to invitees before joining)</label>
-                <textarea value={form.rules_text} onChange={e=>setForm({...form,rules_text:e.target.value})}
-                  rows={3} placeholder="e.g. 1. Contributions due by midnight. 2. Late fee applies after grace period…"
-                  className="w-full border rounded px-3 py-2 text-sm" data-testid="field-rules" />
+
+              {/* Section: Structure */}
+              <div className="border-t pt-5" style={{borderColor:"var(--border)"}}>
+                <div className="label-eyebrow mb-3">Group Structure</div>
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label">Total cycles *</label>
+                      <input required type="number" min="1" value={form.total_cycles} onChange={e=>setForm({...form,total_cycles:e.target.value})}
+                        className="form-input" data-testid="field-total_cycles" />
+                    </div>
+                    <div>
+                      <label className="form-label">Member limit *</label>
+                      <input required type="number" min="1" value={form.member_limit} onChange={e=>setForm({...form,member_limit:e.target.value})}
+                        className="form-input" data-testid="field-member_limit" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label">Due day (1–28) *</label>
+                      <input required type="number" min="1" max="28" value={form.due_day} onChange={e=>setForm({...form,due_day:e.target.value})}
+                        className="form-input" data-testid="field-due_day" />
+                    </div>
+                    <div>
+                      <label className="form-label">Due time *</label>
+                      <input required type="time" value={form.due_time} onChange={e=>setForm({...form,due_time:e.target.value})}
+                        className="form-input" data-testid="field-due_time" />
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="sm:col-span-2 flex items-center gap-2">
-                <input id="enable_comments" type="checkbox" checked={form.enable_comments}
-                  onChange={e=>setForm({...form,enable_comments:e.target.checked})} data-testid="field-enable-comments"/>
-                <label htmlFor="enable_comments" className="text-sm">Enable member comments on this group</label>
+
+              {/* Section: Finances */}
+              <div className="border-t pt-5" style={{borderColor:"var(--border)"}}>
+                <div className="label-eyebrow mb-3">Finances</div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="form-label">Contribution amount (₦) *</label>
+                    <input required type="number" min="0" value={form.contribution_amount} onChange={e=>setForm({...form,contribution_amount:e.target.value})}
+                      className="form-input" data-testid="field-contribution_amount" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label">First payment fee (₦)</label>
+                      <input type="number" min="0" value={form.first_payment_fee} onChange={e=>setForm({...form,first_payment_fee:e.target.value})}
+                        className="form-input" data-testid="field-first_payment_fee" />
+                    </div>
+                    <div>
+                      <label className="form-label">Late fee (₦)</label>
+                      <input type="number" min="0" value={form.late_fee_amount} onChange={e=>setForm({...form,late_fee_amount:e.target.value})}
+                        className="form-input" data-testid="field-late_fee_amount" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="form-label">Late fee method</label>
+                      <select value={form.late_fee_method} onChange={e=>setForm({...form,late_fee_method:e.target.value})}
+                        className="form-input bg-white" data-testid="field-late_fee_method">
+                        <option value="fixed">Fixed amount</option>
+                        <option value="percent">Percentage</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="form-label">Grace period (days)</label>
+                      <input type="number" min="0" value={form.grace_period_days} onChange={e=>setForm({...form,grace_period_days:e.target.value})}
+                        className="form-input" data-testid="field-grace_period_days" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section: Details */}
+              <div className="border-t pt-5" style={{borderColor:"var(--border)"}}>
+                <div className="label-eyebrow mb-3">Details</div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="form-label">Payment account details <span className="font-normal">(bank info for payout recipient)</span></label>
+                    <textarea value={form.payment_account_details} onChange={e=>setForm({...form,payment_account_details:e.target.value})}
+                      rows={2} className="form-input" data-testid="field-account-details"
+                      placeholder="e.g. GTBank – 0123456789 – Amaka Osei" />
+                  </div>
+                  <div>
+                    <label className="form-label">Group rules <span className="font-normal">(shown to invitees before joining)</span></label>
+                    <textarea value={form.rules_text} onChange={e=>setForm({...form,rules_text:e.target.value})}
+                      rows={4} className="form-input"
+                      placeholder="e.g. 1. Contributions due by midnight on the due day.&#10;2. Late fee applies after the grace period."
+                      data-testid="field-rules" />
+                  </div>
+                  <label className="flex items-center gap-3 cursor-pointer select-none py-1">
+                    <input type="checkbox" checked={form.enable_comments}
+                      onChange={e=>setForm({...form,enable_comments:e.target.checked})}
+                      className="w-4 h-4 rounded flex-shrink-0" data-testid="field-enable-comments"/>
+                    <span className="text-sm">Enable member comments on this group</span>
+                  </label>
+                </div>
               </div>
             </div>
-            {createErr && <div className="text-red-700 text-sm mt-3" data-testid="create-error">{createErr}</div>}
-            <div className="flex gap-2 mt-5 justify-end">
-              <button type="button" onClick={()=>setCreateOpen(false)} className="btn-secondary text-sm" data-testid="create-cancel">Cancel</button>
-              <button type="submit" className="btn-primary text-sm" data-testid="create-submit">Create group</button>
+
+            {/* Sticky footer */}
+            {createErr && (
+              <div className="px-5 py-2 text-sm font-medium" style={{background:"#fef2f2",color:"#b91c1c"}} data-testid="create-error">{createErr}</div>
+            )}
+            <div className="border-t px-5 py-4 flex gap-3 flex-shrink-0 bg-white" style={{borderColor:"var(--border)"}}>
+              <button type="button" onClick={()=>setCreateOpen(false)} className="btn-secondary flex-1 text-sm" data-testid="create-cancel">Cancel</button>
+              <button type="submit" className="btn-primary flex-1 text-sm" data-testid="create-submit">Create group</button>
             </div>
           </form>
         </div>
