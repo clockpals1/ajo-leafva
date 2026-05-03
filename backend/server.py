@@ -1020,10 +1020,13 @@ async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
 # ---------------- INCLUDE ROUTER ----------------
 app.include_router(api)
 
+_raw_origins = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=[os.environ.get("FRONTEND_URL", "http://localhost:3000")],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
