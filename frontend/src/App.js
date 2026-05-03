@@ -10,6 +10,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AdminGroupDetail from "./pages/AdminGroupDetail";
 import AdminSettings from "./pages/AdminSettings";
 import InvitePage from "./pages/InvitePage";
+import JoinPage from "./pages/JoinPage";
 import Notifications from "./pages/Notifications";
 import Profile from "./pages/Profile";
 import { Toaster } from "sonner";
@@ -44,6 +45,7 @@ function App() {
           <Route path="/admin/groups/:id" element={<Protected adminOnly><AdminGroupDetail /></Protected>} />
           <Route path="/admin/settings" element={<Protected adminOnly><AdminSettings /></Protected>} />
           <Route path="/invite/:token" element={<InvitePage />} />
+          <Route path="/join/:token" element={<JoinPage />} />
           <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
           <Route path="/profile" element={<Protected><Profile /></Protected>} />
           <Route path="*" element={<Navigate to="/" />} />

@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -55,6 +55,9 @@ export default function AdminGroupDetail() {
   const [editData, setEditData] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+  const [joinToken, setJoinToken] = useState("");
+  const [joinCopied, setJoinCopied] = useState(false);
+  const [joinRegen, setJoinRegen] = useState(false);
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -66,7 +69,10 @@ export default function AdminGroupDetail() {
     setData({ ...d, statuses: detail.statuses, cycles: detail.cycles });
     setUsers(u);
   };
-  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loadJoinLink = () =>
+    api.get(`/admin/groups/${id}/join-link`).then(r => setJoinToken(r.data.join_token)).catch(()=>{});
+
+  useEffect(() => { load(); loadJoinLink(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (data?.group) setEditData({ ...data.group }); }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setField = (k, v) => setEditData(prev => ({ ...prev, [k]: v }));
@@ -253,7 +259,67 @@ export default function AdminGroupDetail() {
           </div>
         )}
 
-        {tab === "invitations" && <InvitationsPanel groupId={id} />}
+        {tab === "invitations" && (
+          <div className="space-y-6">
+            {/* ── Shareable group join link ── */}
+            <div className="card-tactile p-4 sm:p-6">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="font-display text-lg flex items-center gap-2"><Link2 size={16}/> Shareable group link</h3>
+                  <p className="text-xs mt-1" style={{color:"var(--muted)"}}>
+                    Share this link with anyone — they sign up with their own email and join directly. No email required from you.
+                  </p>
+                </div>
+              </div>
+              {joinToken ? (
+                <>
+                  <div className="flex gap-2">
+                    <div className="flex-1 px-3 py-2.5 rounded-lg border text-sm font-mono truncate"
+                      style={{background:"var(--surface)",borderColor:"var(--border)",color:"var(--text)"}}>
+                      {`${window.location.origin}/join/${joinToken}`}
+                    </div>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(`${window.location.origin}/join/${joinToken}`);
+                        setJoinCopied(true);
+                        setTimeout(()=>setJoinCopied(false), 2000);
+                      }}
+                      className="px-4 py-2.5 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 transition-colors"
+                      style={joinCopied
+                        ? {background:"#f0fdf4",color:"#16a34a",borderColor:"#86efac"}
+                        : {borderColor:"var(--border)",color:"var(--primary)"}}>
+                      {joinCopied ? <><Check size={14}/> Copied!</> : <><Copy size={14}/> Copy link</>}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between mt-3">
+                    <a href={`${window.location.origin}/join/${joinToken}`} target="_blank" rel="noreferrer"
+                      className="text-xs inline-flex items-center gap-1" style={{color:"var(--primary)"}}>
+                      <ExternalLink size={12}/> Preview join page
+                    </a>
+                    <button
+                      disabled={joinRegen}
+                      onClick={async () => {
+                        if (!window.confirm("Regenerate the link? The old link will stop working.")) return;
+                        setJoinRegen(true);
+                        try {
+                          const r = await api.post(`/admin/groups/${id}/regenerate-join-link`);
+                          setJoinToken(r.data.join_token);
+                        } finally { setJoinRegen(false); }
+                      }}
+                      className="text-xs inline-flex items-center gap-1" style={{color:"var(--muted)"}}>
+                      <RefreshCw size={11}/> {joinRegen ? "Regenerating…" : "Regenerate link"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm" style={{color:"var(--muted)"}}>Loading link…</div>
+              )}
+            </div>
+
+            {/* ── Personal email invitations (optional, for tracking) ── */}
+            <InvitationsPanel groupId={id} />
+          </div>
+        )}
 
         {tab === "comments" && (
           <div className="space-y-6">

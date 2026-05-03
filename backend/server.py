@@ -317,6 +317,7 @@ async def create_group(data: GroupCreate, admin=Depends(require_admin)):
         "status": "active",
         "created_by": admin["id"],
         "created_at": now_utc().isoformat(),
+        "join_token": uuid.uuid4().hex,
     }
     await db.groups.insert_one(group_doc.copy())
     # generate cycles
@@ -1040,6 +1041,162 @@ async def accept_invite(token: str, data: AcceptIn, request: Request, response: 
                             link=f"/groups/{group['id']}")
     safe_user = {k: v for k, v in current_user.items() if k != "password_hash"}
     return {"ok": True, "group_id": group["id"], "user": safe_user}
+
+# ---------------- OPEN GROUP JOIN LINK ----------------
+
+@api.get("/admin/groups/{group_id}/join-link")
+async def get_group_join_link(group_id: str, admin=Depends(require_admin)):
+    group = await db.groups.find_one({"id": group_id}, {"_id": 0, "join_token": 1})
+    if not group:
+        raise HTTPException(404, "Group not found")
+    if not group.get("join_token"):
+        new_token = uuid.uuid4().hex
+        await db.groups.update_one({"id": group_id}, {"$set": {"join_token": new_token}})
+        return {"join_token": new_token}
+    return {"join_token": group["join_token"]}
+
+@api.post("/admin/groups/{group_id}/regenerate-join-link")
+async def regenerate_group_join_link(group_id: str, admin=Depends(require_admin)):
+    new_token = uuid.uuid4().hex
+    result = await db.groups.update_one({"id": group_id}, {"$set": {"join_token": new_token}})
+    if result.matched_count == 0:
+        raise HTTPException(404, "Group not found")
+    await log_audit(admin["id"], "join_link_regenerated", target=group_id)
+    return {"join_token": new_token}
+
+@api.get("/join/{token}")
+async def view_group_join(token: str):
+    group = await db.groups.find_one({"join_token": token}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Join link not found or expired")
+    if group.get("status") != "active":
+        return {"status": group["status"], "group_name": group["name"]}
+    count = await db.group_members.count_documents({"group_id": group["id"]})
+    return {
+        "status": "active",
+        "group": {
+            "id": group["id"],
+            "name": group["name"],
+            "description": group.get("description", ""),
+            "contribution_amount": group["contribution_amount"],
+            "frequency": group["frequency"],
+            "total_cycles": group["total_cycles"],
+            "start_date": group["start_date"],
+            "due_day": group["due_day"],
+            "due_time": group["due_time"],
+            "first_payment_fee": group.get("first_payment_fee", 0),
+            "late_fee_amount": group.get("late_fee_amount", 0),
+            "grace_period_days": group.get("grace_period_days", 0),
+            "rules_text": group.get("rules_text", ""),
+            "member_limit": group.get("member_limit", 12),
+            "members_count": count,
+        }
+    }
+
+class JoinIn(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    accepted_rules: bool
+
+@api.post("/join/{token}/accept")
+async def accept_group_join(token: str, data: JoinIn, request: Request, response: Response):
+    if not data.accepted_rules:
+        raise HTTPException(400, "You must accept the group rules to join.")
+    group = await db.groups.find_one({"join_token": token}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Join link not found or expired")
+    if group.get("status") != "active":
+        raise HTTPException(400, f"Group is {group.get('status', 'unavailable')}")
+
+    current_user = None
+    cookie_tok = request.cookies.get("access_token")
+    if cookie_tok:
+        try:
+            payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
+            current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        except Exception:
+            pass
+
+    if not current_user:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            bearer = auth_header[7:]
+            try:
+                payload = jwt.decode(bearer, JWT_SECRET, algorithms=[JWT_ALG])
+                current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+            except Exception:
+                pass
+
+    new_token_str = None
+    if not current_user:
+        if not data.email or not data.name or not data.password or len(data.password) < 6:
+            raise HTTPException(400, "Name, email and a 6+ character password are required to create your account.")
+        email_lc = data.email.lower()
+        existing = await db.users.find_one({"email": email_lc}, {"_id": 0})
+        if existing:
+            raise HTTPException(409, "An account with this email already exists. Please log in first, then reopen the link.")
+        user_id = str(uuid.uuid4())
+        new_user = {
+            "id": user_id, "email": email_lc, "name": data.name,
+            "password_hash": hash_pw(data.password), "role": "member",
+            "phone": "",
+            "bank_name": "", "bank_account_number": "", "bank_account_name": "",
+            "visibility_preference": "visible", "visibility_status": "approved",
+            "created_at": now_utc().isoformat(),
+        }
+        await db.users.insert_one(new_user.copy())
+        current_user = new_user
+        new_token_str = make_token(user_id, email_lc, "member")
+        set_auth_cookie(response, new_token_str)
+
+    already = await db.group_members.find_one({"group_id": group["id"], "user_id": current_user["id"]})
+    if already:
+        safe = {k: v for k, v in current_user.items() if k != "password_hash"}
+        return {"ok": True, "group_id": group["id"], "user": safe, **({"token": new_token_str} if new_token_str else {})}
+
+    count = await db.group_members.count_documents({"group_id": group["id"]})
+    if count >= group["member_limit"]:
+        raise HTTPException(400, "Group member limit reached")
+
+    position = count + 1
+    gm = {
+        "id": str(uuid.uuid4()),
+        "group_id": group["id"],
+        "user_id": current_user["id"],
+        "user_email": current_user["email"],
+        "user_name": current_user["name"],
+        "payout_position": position,
+        "joined_at": now_utc().isoformat(),
+        "status": "active",
+        "rules_accepted_at": now_utc().isoformat(),
+        "joined_via": "join_link",
+    }
+    await db.group_members.insert_one(gm.copy())
+    cycles = await db.cycles.find({"group_id": group["id"]}).to_list(1000)
+    today = now_utc().date()
+    docs = []
+    for c in cycles:
+        due = date.fromisoformat(c["due_date"])
+        sv = "Due" if due <= today else "Not_Due"
+        docs.append({
+            "id": str(uuid.uuid4()), "group_id": group["id"],
+            "cycle_no": c["cycle_no"], "user_id": current_user["id"],
+            "status": sv, "expected_amount": c["expected_amount"],
+            "paid_amount": 0, "approved_at": None, "approver_id": None,
+            "updated_at": now_utc().isoformat(),
+        })
+    if docs:
+        await db.member_cycle_status.insert_many(docs)
+    cycle = await db.cycles.find_one({"group_id": group["id"], "cycle_no": position})
+    if cycle and not cycle.get("payout_user_id"):
+        await db.cycles.update_one({"id": cycle["id"]}, {"$set": {"payout_user_id": current_user["id"]}})
+    await log_audit(current_user["id"], "group_joined_via_link", target=group["id"])
+    await push_notification(current_user["id"], "Joined group",
+                            f"You successfully joined '{group['name']}'.",
+                            link=f"/groups/{group['id']}")
+    safe = {k: v for k, v in current_user.items() if k != "password_hash"}
+    return {"ok": True, "group_id": group["id"], "user": safe, **({"token": new_token_str} if new_token_str else {})}
 
 # ---------------- GROUP COMMENTS ----------------
 class CommentIn(BaseModel):
