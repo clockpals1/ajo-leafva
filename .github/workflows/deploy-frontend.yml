@@ -21,10 +21,6 @@ jobs:
         working-directory: frontend
         run: npm install --legacy-peer-deps
 
-      - name: Force ajv v8 at top level
-        working-directory: frontend
-        run: npm install ajv@^8.11.0 --legacy-peer-deps
-
       - name: Build
         working-directory: frontend
         env:
