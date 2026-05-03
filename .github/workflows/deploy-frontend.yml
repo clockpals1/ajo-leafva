@@ -19,7 +19,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: yarn install --network-timeout 600000
+        run: npm install --legacy-peer-deps
+
+      - name: Force ajv v8 at top level
+        working-directory: frontend
+        run: npm install ajv@^8.11.0 --legacy-peer-deps
 
       - name: Build
         working-directory: frontend
@@ -27,7 +31,7 @@ jobs:
           CI: "false"
           REACT_APP_BACKEND_URL: https://ajo-leafva.onrender.com
           GENERATE_SOURCEMAP: "false"
-        run: yarn build
+        run: npm run build
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
