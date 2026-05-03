@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -70,6 +70,9 @@ export default function AdminGroupDetail() {
   const { group, members, cycles, statuses } = data;
   const memberIds = new Set(members.map(m=>m.user_id));
   const availableUsers = users.filter(u => u.role === "member" && !memberIds.has(u.id));
+  const userMap = Object.fromEntries(users.map(u => [u.id, u]));
+
+  const copyText = (text) => navigator.clipboard?.writeText(text);
 
   const addMember = async (e) => {
     e.preventDefault(); setErr("");
@@ -109,6 +112,13 @@ export default function AdminGroupDetail() {
             <div className="label-eyebrow">Contribution</div>
             <div className="font-display text-3xl mt-1">{fmtMoney(group.contribution_amount)}</div>
             <div className="text-xs mt-2" style={{color:"var(--muted)"}}>{members.length}/{group.member_limit} members</div>
+            {group.whatsapp_invite_link && (
+              <a href={group.whatsapp_invite_link} target="_blank" rel="noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded"
+                style={{background:"#25D36615", color:"#128C7E", border:"1px solid #25D36630"}}>
+                <ExternalLink size={11}/> WhatsApp Group
+              </a>
+            )}
           </div>
         </div>
 
@@ -129,24 +139,43 @@ export default function AdminGroupDetail() {
                   <th className="px-4 py-3 label-eyebrow">#</th>
                   <th className="px-4 py-3 label-eyebrow">Member</th>
                   <th className="px-4 py-3 label-eyebrow">Email</th>
+                  <th className="px-4 py-3 label-eyebrow">Bank details</th>
                   <th className="px-4 py-3 label-eyebrow">Joined</th>
                   <th className="px-4 py-3 label-eyebrow"></th>
                 </tr></thead>
                 <tbody>
-                  {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => (
+                  {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
+                    const u = userMap[m.user_id];
+                    const hasBank = u?.bank_name && u?.bank_account_number;
+                    return (
                     <tr key={m.id} className="border-t" style={{borderColor:"var(--border)"}}>
                       <td className="px-4 py-3 font-display">#{m.payout_position}</td>
-                      <td className="px-4 py-3">{m.user_name}</td>
-                      <td className="px-4 py-3" style={{color:"var(--muted)"}}>{m.user_email}</td>
-                      <td className="px-4 py-3" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
+                      <td className="px-4 py-3 font-medium">{m.user_name}</td>
+                      <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{m.user_email}</td>
+                      <td className="px-4 py-3">
+                        {hasBank ? (
+                          <div className="text-xs">
+                            <div className="font-semibold">{u.bank_name}</div>
+                            <div className="flex items-center gap-1" style={{color:"var(--muted)"}}>
+                              <span>{u.bank_account_number}</span>
+                              <button onClick={()=>copyText(u.bank_account_number)} title="Copy" className="opacity-50 hover:opacity-100"><Copy size={10}/></button>
+                            </div>
+                            <div style={{color:"var(--muted)"}}>{u.bank_account_name}</div>
+                          </div>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2", color:"#991b1b"}}>Not set</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
                       <td className="px-4 py-3 text-right">
                         <button onClick={()=>remove(m.user_id)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
                           <Trash2 size={12}/> Remove
                         </button>
                       </td>
                     </tr>
-                  ))}
-                  {members.length===0 && <tr><td colSpan={5} className="px-4 py-10 text-center" style={{color:"var(--muted)"}}>No members yet.</td></tr>}
+                    );
+                  })}
+                  {members.length===0 && <tr><td colSpan={6} className="px-4 py-10 text-center" style={{color:"var(--muted)"}}>No members yet.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -207,17 +236,33 @@ export default function AdminGroupDetail() {
                 <th className="px-4 py-3 label-eyebrow">Cycle</th>
                 <th className="px-4 py-3 label-eyebrow">Due date</th>
                 <th className="px-4 py-3 label-eyebrow">Recipient</th>
+                <th className="px-4 py-3 label-eyebrow">Recipient bank</th>
                 <th className="px-4 py-3 label-eyebrow">Status</th>
                 <th className="px-4 py-3 label-eyebrow"></th>
               </tr></thead>
               <tbody>
                 {cycles.map(c => {
                   const recipient = members.find(m=>m.user_id===c.payout_user_id);
+                  const recUser = userMap[c.payout_user_id];
+                  const bankStr = recUser?.bank_account_number
+                    ? `${recUser.bank_name} — ${recUser.bank_account_number} (${recUser.bank_account_name})`
+                    : null;
                   return (
                     <tr key={c.id} className="border-t" style={{borderColor:"var(--border)"}}>
                       <td className="px-4 py-3 font-display">#{c.cycle_no}</td>
                       <td className="px-4 py-3">{fmtDate(c.due_date)}</td>
-                      <td className="px-4 py-3">{recipient?.user_name || <span style={{color:"var(--muted)"}}>—</span>}</td>
+                      <td className="px-4 py-3 font-medium">{recipient?.user_name || <span style={{color:"var(--muted)"}}>—</span>}</td>
+                      <td className="px-4 py-3">
+                        {bankStr ? (
+                          <div className="flex items-center gap-1">
+                            <div className="text-xs">
+                              <div className="font-semibold">{recUser.bank_name}</div>
+                              <div style={{color:"var(--muted)"}}>{recUser.bank_account_number} · {recUser.bank_account_name}</div>
+                            </div>
+                            <button onClick={()=>copyText(bankStr)} title="Copy bank details" className="opacity-40 hover:opacity-100 shrink-0"><Copy size={11}/></button>
+                          </div>
+                        ) : <span className="text-xs" style={{color:"var(--muted)"}}>—</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <span className={`badge ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
                       </td>

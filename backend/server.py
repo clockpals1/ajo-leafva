@@ -469,6 +469,12 @@ async def get_payment(payment_id: str, user=Depends(get_current_user)):
 @api.get("/admin/payments/pending")
 async def pending_payments(admin=Depends(require_admin)):
     items = await db.payments.find({"status": "submitted"}, {"_id": 0, "receipt_data_url": 0}).sort("submitted_at", -1).to_list(500)
+    if items:
+        gids = list({p["group_id"] for p in items if p.get("group_id")})
+        grps = await db.groups.find({"id": {"$in": gids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        gmap = {g["id"]: g["name"] for g in grps}
+        for p in items:
+            p["group_name"] = gmap.get(p.get("group_id"), "")
     return items
 
 @api.post("/admin/payments/{payment_id}/decision")
