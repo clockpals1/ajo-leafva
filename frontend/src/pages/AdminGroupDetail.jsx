@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check, Copy, ExternalLink } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -52,6 +52,9 @@ export default function AdminGroupDetail() {
   const [addPos, setAddPos] = useState("");
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("members");
+  const [editData, setEditData] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -64,6 +67,19 @@ export default function AdminGroupDetail() {
     setUsers(u);
   };
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (data?.group) setEditData({ ...data.group }); }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setField = (k, v) => setEditData(prev => ({ ...prev, [k]: v }));
+
+  const saveGroup = async () => {
+    setSaving(true); setSaveMsg("");
+    try {
+      await api.patch(`/admin/groups/${id}`, editData);
+      setSaveMsg("Saved!");
+      load();
+    } catch (e) { setSaveMsg(formatErr(e?.response?.data?.detail) || "Failed"); }
+    finally { setSaving(false); setTimeout(() => setSaveMsg(""), 3000); }
+  };
 
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10">Loading...</div></div>;
 
@@ -123,7 +139,7 @@ export default function AdminGroupDetail() {
         </div>
 
         <div className="flex gap-1 border-b mb-6" style={{borderColor:"var(--border)"}}>
-          {["members","invitations","ledger","payouts","comments"].map(k => (
+          {["members","invitations","ledger","payouts","comments","settings"].map(k => (
             <button key={k} onClick={()=>setTab(k)}
               className={`px-4 py-2 text-sm border-b-2 -mb-px capitalize ${tab===k?"font-medium":"opacity-60"}`}
               style={{borderColor: tab===k?"var(--primary)":"transparent", color: tab===k?"var(--primary)":"var(--text)"}}
@@ -278,6 +294,120 @@ export default function AdminGroupDetail() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {tab === "settings" && editData && (
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="card-tactile p-6 space-y-4">
+              <h3 className="font-display text-lg flex items-center gap-2"><Pencil size={15}/> Basic details</h3>
+              <div>
+                <label className="label-eyebrow block mb-1">Group name</label>
+                <input value={editData.name||""} onChange={e=>setField("name",e.target.value)} className="w-full border rounded px-3 py-2"/>
+              </div>
+              <div>
+                <label className="label-eyebrow block mb-1">Description</label>
+                <textarea rows={2} value={editData.description||""} onChange={e=>setField("description",e.target.value)} className="w-full border rounded px-3 py-2"/>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label-eyebrow block mb-1">Contribution (₦)</label>
+                  <input type="number" value={editData.contribution_amount||""} onChange={e=>setField("contribution_amount",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                </div>
+                <div>
+                  <label className="label-eyebrow block mb-1">Member limit</label>
+                  <input type="number" value={editData.member_limit||""} onChange={e=>setField("member_limit",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label-eyebrow block mb-1">Frequency</label>
+                  <select value={editData.frequency||"monthly"} onChange={e=>setField("frequency",e.target.value)} className="w-full border rounded px-3 py-2 bg-white">
+                    <option value="monthly">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Bi-weekly</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label-eyebrow block mb-1">Status</label>
+                  <select value={editData.status||"active"} onChange={e=>setField("status",e.target.value)} className="w-full border rounded px-3 py-2 bg-white">
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label-eyebrow block mb-1">Due day</label>
+                  <input type="number" min={1} max={31} value={editData.due_day||1} onChange={e=>setField("due_day",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                </div>
+                <div>
+                  <label className="label-eyebrow block mb-1">Due time</label>
+                  <input type="time" value={editData.due_time||"23:59"} onChange={e=>setField("due_time",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="card-tactile p-6 space-y-4">
+                <h3 className="font-display text-lg">Fees &amp; rules</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label-eyebrow block mb-1">First-payment fee (₦)</label>
+                    <input type="number" value={editData.first_payment_fee||0} onChange={e=>setField("first_payment_fee",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                  </div>
+                  <div>
+                    <label className="label-eyebrow block mb-1">Late fee</label>
+                    <input type="number" value={editData.late_fee_amount||0} onChange={e=>setField("late_fee_amount",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label-eyebrow block mb-1">Late fee method</label>
+                    <select value={editData.late_fee_method||"fixed"} onChange={e=>setField("late_fee_method",e.target.value)} className="w-full border rounded px-3 py-2 bg-white">
+                      <option value="fixed">Fixed</option>
+                      <option value="percent">Percent</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label-eyebrow block mb-1">Grace period (days)</label>
+                    <input type="number" min={0} value={editData.grace_period_days||0} onChange={e=>setField("grace_period_days",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="label-eyebrow block mb-1">Rules text</label>
+                  <textarea rows={3} value={editData.rules_text||""} onChange={e=>setField("rules_text",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                </div>
+                <div>
+                  <label className="label-eyebrow block mb-1">Payment account details</label>
+                  <input value={editData.payment_account_details||""} onChange={e=>setField("payment_account_details",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id="enable_comments" checked={!!editData.enable_comments} onChange={e=>setField("enable_comments",e.target.checked)} className="w-4 h-4"/>
+                  <label htmlFor="enable_comments" className="text-sm">Enable member comments</label>
+                </div>
+              </div>
+
+              <div className="card-tactile p-6 space-y-4">
+                <h3 className="font-display text-lg">WhatsApp</h3>
+                <div>
+                  <label className="label-eyebrow block mb-1">Invite link</label>
+                  <input value={editData.whatsapp_invite_link||""} onChange={e=>setField("whatsapp_invite_link",e.target.value)} className="w-full border rounded px-3 py-2" placeholder="https://chat.whatsapp.com/..."/>
+                </div>
+                <div>
+                  <label className="label-eyebrow block mb-1">WhatsApp group name</label>
+                  <input value={editData.whatsapp_group_name||""} onChange={e=>setField("whatsapp_group_name",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button onClick={saveGroup} disabled={saving} className="btn-primary flex items-center gap-2">
+                  <Save size={15}/>{saving ? "Saving…" : "Save changes"}
+                </button>
+                {saveMsg && <span className="text-sm" style={{color: saveMsg==="Saved!" ? "var(--primary)" : "#b91c1c"}}>{saveMsg}</span>}
+              </div>
+            </div>
           </div>
         )}
       </main>

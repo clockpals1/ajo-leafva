@@ -114,6 +114,25 @@ class GroupCreate(BaseModel):
     rules_text: Optional[str] = ""
     enable_comments: bool = True
 
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    contribution_amount: Optional[float] = None
+    frequency: Optional[Literal["monthly", "weekly", "biweekly"]] = None
+    member_limit: Optional[int] = None
+    due_day: Optional[int] = None
+    due_time: Optional[str] = None
+    first_payment_fee: Optional[float] = None
+    late_fee_amount: Optional[float] = None
+    late_fee_method: Optional[Literal["fixed", "percent"]] = None
+    grace_period_days: Optional[int] = None
+    payment_account_details: Optional[str] = None
+    whatsapp_invite_link: Optional[str] = None
+    whatsapp_group_name: Optional[str] = None
+    rules_text: Optional[str] = None
+    enable_comments: Optional[bool] = None
+    status: Optional[Literal["active", "paused", "completed"]] = None
+
 class AddMember(BaseModel):
     email: EmailStr
     payout_position: Optional[int] = None
@@ -336,6 +355,19 @@ async def get_group_admin(group_id: str, admin=Depends(require_admin)):
     members = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
     return {"group": g, "members": members, "cycles": cycles}
+
+@api.patch("/admin/groups/{group_id}")
+async def update_group(group_id: str, data: GroupUpdate, admin=Depends(require_admin)):
+    g = await db.groups.find_one({"id": group_id})
+    if not g:
+        raise HTTPException(404, "Group not found")
+    updates = {k: v for k, v in data.dict().items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    await db.groups.update_one({"id": group_id}, {"$set": updates})
+    await log_audit(admin["id"], "group_updated", target=group_id, meta=updates)
+    updated = await db.groups.find_one({"id": group_id}, {"_id": 0})
+    return updated
 
 @api.delete("/admin/groups/{group_id}")
 async def delete_group(group_id: str, admin=Depends(require_admin)):
