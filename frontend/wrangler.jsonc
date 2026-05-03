@@ -1,15 +1,9 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ajo-leafva",
+  "pages_build_output_dir": "build",
   "compatibility_date": "2026-05-03",
-  "observability": {
-    "enabled": true
-  },
   "assets": {
     "directory": "build",
     "not_found_handling": "single-page-application"
-  },
-  "compatibility_flags": [
-    "nodejs_compat"
-  ]
+  }
 }
