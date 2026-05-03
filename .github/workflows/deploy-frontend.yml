@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm install --legacy-peer-deps
+        run: yarn install --network-timeout 600000
 
       - name: Build
         working-directory: frontend
@@ -27,7 +27,7 @@ jobs:
           CI: "false"
           REACT_APP_BACKEND_URL: https://ajo-leafva.onrender.com
           GENERATE_SOURCEMAP: "false"
-        run: npm run build
+        run: yarn build
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
