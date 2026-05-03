@@ -133,6 +133,15 @@ class VisibilityDecision(BaseModel):
     decision: Literal["approve", "reject"]
     note: Optional[str] = ""
 
+class AdminCreateUser(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: Literal["member", "admin", "super_admin"] = "member"
+
+class UserRoleUpdate(BaseModel):
+    role: Literal["member", "admin", "super_admin"]
+
 # ---------------- AUDIT ----------------
 async def log_audit(actor_id: str, action: str, target: str = "", meta: dict = None):
     await db.audit_logs.insert_one({
@@ -629,6 +638,41 @@ async def dashboard_stats(admin=Depends(require_admin)):
 async def list_users(admin=Depends(require_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
     return users
+
+@api.post("/admin/users")
+async def admin_create_user(data: AdminCreateUser, admin=Depends(require_admin)):
+    email = data.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "Email already registered")
+    user_id = str(uuid.uuid4())
+    user = {
+        "id": user_id,
+        "email": email,
+        "name": data.name,
+        "password_hash": hash_pw(data.password),
+        "role": data.role,
+        "phone": "",
+        "bank_name": "",
+        "bank_account_number": "",
+        "bank_account_name": "",
+        "visibility_preference": "visible",
+        "visibility_status": "approved",
+        "created_at": now_utc().isoformat(),
+    }
+    await db.users.insert_one(user.copy())
+    await log_audit(admin["id"], "user_created", target=email, meta={"role": data.role})
+    user.pop("password_hash", None)
+    user.pop("_id", None)
+    return user
+
+@api.patch("/admin/users/{user_id}/role")
+async def update_user_role(user_id: str, data: UserRoleUpdate, admin=Depends(require_admin)):
+    user = await db.users.find_one({"id": user_id})
+    if not user:
+        raise HTTPException(404, "User not found")
+    await db.users.update_one({"id": user_id}, {"$set": {"role": data.role}})
+    await log_audit(admin["id"], "user_role_changed", target=user_id, meta={"new_role": data.role})
+    return {"ok": True, "role": data.role}
 
 # ---------------- VISIBILITY ----------------
 @api.get("/admin/visibility-requests")

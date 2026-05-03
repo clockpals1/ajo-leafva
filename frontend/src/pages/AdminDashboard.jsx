@@ -4,7 +4,7 @@ import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import {
   Plus, Users, UserCheck, Clock, AlertTriangle, TrendingUp,
-  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search,
+  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus,
 } from "lucide-react";
 
 const ACTION_COLORS = {
@@ -46,6 +46,11 @@ export default function AdminDashboard() {
   const [broadBody, setBroadBody] = useState("");
   const [broadMsg, setBroadMsg] = useState("");
 
+  const [addUserOpen, setAddUserOpen] = useState(false);
+  const [addUserForm, setAddUserForm] = useState({ name: "", email: "", password: "", role: "member" });
+  const [addUserErr, setAddUserErr] = useState("");
+  const [roleUpdating, setRoleUpdating] = useState(null);
+
   const load = async () => {
     const [s, g, p, u, a] = await Promise.all([
       api.get("/admin/dashboard-stats").then(r=>r.data),
@@ -81,6 +86,25 @@ export default function AdminDashboard() {
       await api.post(`/admin/payments/${reviewing.id}/decision`, { decision, note: reviewNote });
       setReviewing(null); load();
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const submitAddUser = async (e) => {
+    e.preventDefault(); setAddUserErr("");
+    try {
+      await api.post("/admin/users", addUserForm);
+      setAddUserOpen(false);
+      setAddUserForm({ name: "", email: "", password: "", role: "member" });
+      load();
+    } catch (e) { setAddUserErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const changeRole = async (userId, newRole) => {
+    setRoleUpdating(userId);
+    try {
+      await api.patch(`/admin/users/${userId}/role`, { role: newRole });
+      setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setRoleUpdating(null); }
   };
 
   const sendBroadcast = async (e) => {
@@ -359,14 +383,17 @@ export default function AdminDashboard() {
         {/* ── MEMBERS ── */}
         {tab === "members" && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="relative max-w-xs flex-1">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative max-w-xs flex-1 min-w-[180px]">
                 <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:"var(--muted)"}} />
                 <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)}
                   placeholder="Search by name or email…"
                   className="w-full border rounded pl-8 pr-3 py-2 bg-white text-sm" />
               </div>
               <span className="text-sm" style={{color:"var(--muted)"}}>{filteredUsers.length} user{filteredUsers.length !== 1 ? "s" : ""}</span>
+              <button onClick={()=>setAddUserOpen(true)} className="btn-primary text-sm inline-flex items-center gap-1.5 ml-auto">
+                <UserPlus size={14}/> Add User
+              </button>
             </div>
             <div className="card-tactile overflow-hidden" data-testid="users-table">
               <table className="w-full text-sm">
@@ -386,7 +413,19 @@ export default function AdminDashboard() {
                       <tr key={u.id} className="border-t" style={{borderColor:"var(--border)"}}>
                         <td className="px-4 py-3 font-medium">{u.name}</td>
                         <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{u.email}</td>
-                        <td className="px-4 py-3"><span className="badge s-Carried_Forward">{u.role}</span></td>
+                        <td className="px-4 py-3">
+                          <select
+                            value={u.role}
+                            disabled={roleUpdating === u.id}
+                            onChange={e => changeRole(u.id, e.target.value)}
+                            className="text-xs border rounded px-2 py-1 bg-white"
+                            style={{color:"var(--primary)", fontWeight:600}}
+                          >
+                            <option value="member">member</option>
+                            <option value="admin">admin</option>
+                            <option value="super_admin">super_admin</option>
+                          </select>
+                        </td>
                         <td className="px-4 py-3">
                           {hasBank ? (
                             <div>
@@ -445,14 +484,59 @@ export default function AdminDashboard() {
         )}
       </main>
 
+      {/* ── Add User Modal ── */}
+      {addUserOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={()=>setAddUserOpen(false)}>
+          <form onClick={e=>e.stopPropagation()} onSubmit={submitAddUser}
+            className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
+            <div className="flex items-center gap-2 mb-1">
+              <UserPlus size={18} style={{color:"var(--primary)"}} />
+              <h3 className="font-display text-xl">Add User</h3>
+            </div>
+            <p className="text-xs mb-5" style={{color:"var(--muted)"}}>Create an account on behalf of a member. They can log in and update their profile.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Full name</label>
+                <input required value={addUserForm.name} onChange={e=>setAddUserForm({...addUserForm,name:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm" placeholder="e.g. Amaka Osei" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Email address</label>
+                <input required type="email" value={addUserForm.email} onChange={e=>setAddUserForm({...addUserForm,email:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm" placeholder="amaka@example.com" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Temporary password</label>
+                <input required type="password" value={addUserForm.password} onChange={e=>setAddUserForm({...addUserForm,password:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm" placeholder="Min. 6 characters" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Role</label>
+                <select value={addUserForm.role} onChange={e=>setAddUserForm({...addUserForm,role:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm bg-white">
+                  <option value="member">member — regular ajo participant</option>
+                  <option value="admin">admin — can manage groups</option>
+                  <option value="super_admin">super_admin — full platform access</option>
+                </select>
+              </div>
+            </div>
+            {addUserErr && <div className="text-red-700 text-sm mt-3">{addUserErr}</div>}
+            <div className="flex gap-2 mt-5 justify-end">
+              <button type="button" onClick={()=>setAddUserOpen(false)} className="btn-secondary text-sm">Cancel</button>
+              <button type="submit" className="btn-primary text-sm inline-flex items-center gap-1.5"><UserPlus size={13}/>Create user</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* ── Create Group Modal ── */}
       {createOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 z-50 overflow-y-auto" onClick={()=>setCreateOpen(false)}>
           <form onClick={e=>e.stopPropagation()} onSubmit={submitCreate}
-            className="bg-white rounded-xl max-w-2xl w-full p-6 my-8 shadow-2xl" data-testid="create-group-modal">
-            <h3 className="font-display text-2xl mb-1">Create Ajo Group</h3>
-            <p className="text-xs mb-5" style={{color:"var(--muted)"}}>Configure settings. You can invite members after creation.</p>
-            <div className="grid grid-cols-2 gap-3">
+            className="bg-white rounded-xl max-w-2xl w-full p-5 sm:p-6 my-6 shadow-2xl" data-testid="create-group-modal">
+            <h3 className="font-display text-xl sm:text-2xl mb-1">Create Ajo Group</h3>
+            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Configure settings. You can invite members after creation.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
                 ["name","Group name","text",true],
                 ["description","Description","text",false],
@@ -468,7 +552,7 @@ export default function AdminDashboard() {
                 ["late_fee_method","Late fee method",null,true,["fixed","percent"]],
                 ["grace_period_days","Grace period (days)","number",false],
               ].map(([k,l,t,req,opts]) => (
-                <div key={k} className={k==="description" ? "col-span-2" : ""}>
+                <div key={k} className={k==="description" ? "sm:col-span-2" : ""}>
                   <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>{l}</label>
                   {opts
                     ? <select required={req} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}
@@ -480,18 +564,18 @@ export default function AdminDashboard() {
                   }
                 </div>
               ))}
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Payment account details (bank info for payout recipient)</label>
                 <textarea value={form.payment_account_details} onChange={e=>setForm({...form,payment_account_details:e.target.value})}
                   rows={2} className="w-full border rounded px-3 py-2 text-sm" data-testid="field-account-details" />
               </div>
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Group rules (shown to invitees before joining)</label>
                 <textarea value={form.rules_text} onChange={e=>setForm({...form,rules_text:e.target.value})}
-                  rows={4} placeholder="e.g. 1. Contributions due by midnight. 2. Late fee applies after grace period…"
+                  rows={3} placeholder="e.g. 1. Contributions due by midnight. 2. Late fee applies after grace period…"
                   className="w-full border rounded px-3 py-2 text-sm" data-testid="field-rules" />
               </div>
-              <div className="col-span-2 flex items-center gap-2">
+              <div className="sm:col-span-2 flex items-center gap-2">
                 <input id="enable_comments" type="checkbox" checked={form.enable_comments}
                   onChange={e=>setForm({...form,enable_comments:e.target.checked})} data-testid="field-enable-comments"/>
                 <label htmlFor="enable_comments" className="text-sm">Enable member comments on this group</label>
