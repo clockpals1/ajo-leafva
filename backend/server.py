@@ -948,7 +948,20 @@ async def accept_invite(token: str, data: AcceptIn, request: Request, response: 
             payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
             current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         except Exception:
-            current_user = None
+            pass
+
+    if not current_user:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            bearer = auth_header[7:]
+            try:
+                payload = jwt.decode(bearer, JWT_SECRET, algorithms=[JWT_ALG])
+                current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+            except Exception:
+                pass
+
+    if current_user and inv.get("email") and current_user["email"].lower() != inv["email"].lower():
+        raise HTTPException(403, f"This invitation was sent to {inv['email']}. Please sign in with that email address to continue.")
 
     if not current_user:
         email = inv["email"]

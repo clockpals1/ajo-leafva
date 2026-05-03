@@ -51,71 +51,131 @@ export default function InvitePage() {
     finally { setBusy(false); }
   };
 
-  if (done) return <div className="min-h-screen bg-app flex items-center justify-center p-6"><div className="card-tactile p-8 max-w-md text-center"><CheckCircle2 className="mx-auto mb-3" style={{color:"var(--primary)"}} size={36}/><div className="font-display text-2xl">You're in!</div><div className="text-sm mt-2" style={{color:"var(--muted)"}}>Redirecting to your group…</div></div></div>;
+  if (done) return (
+    <div className="min-h-screen bg-app flex items-center justify-center p-6">
+      <div className="card-tactile p-8 max-w-sm w-full text-center">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{background:"var(--surface)"}}>
+          <CheckCircle2 size={36} style={{color:"var(--primary)"}} />
+        </div>
+        <div className="font-display text-2xl">You're in!</div>
+        <div className="text-sm mt-2" style={{color:"var(--muted)"}}>Taking you to your group…</div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-app">
-      <header className="max-w-5xl mx-auto px-6 py-6 flex items-center gap-2">
-        <div className="w-8 h-8 rounded-full" style={{ background: "var(--primary)" }}></div>
-        <div className="font-display text-xl">Ajo</div>
+      <header className="px-4 sm:px-6 py-4 flex items-center gap-2 border-b" style={{borderColor:"var(--border)"}}>
+        <div className="w-7 h-7 rounded-full" style={{ background: "var(--primary)" }}></div>
+        <div className="font-display text-lg">Ajo</div>
       </header>
-      <main className="max-w-3xl mx-auto px-6 pb-16">
-        <div className="label-eyebrow">You're invited</div>
-        <h1 className="font-display text-4xl mt-2">Join <span style={{color:"var(--secondary)"}}>{group.name}</span></h1>
-        {data.invitation.note && <p className="mt-3 text-sm italic" style={{color:"var(--muted)"}}>“{data.invitation.note}”</p>}
 
-        <section className="card-tactile p-6 mt-8">
+      <main className="max-w-2xl mx-auto px-4 sm:px-6 pb-16 pt-6">
+
+        {/* Invitation header */}
+        <div className="mb-6">
+          <div className="label-eyebrow mb-1">Personal invitation</div>
+          <h1 className="font-display text-2xl sm:text-4xl leading-tight">
+            Join <span style={{color:"var(--secondary)"}}>{group.name}</span>
+          </h1>
+          <div className="mt-2 flex items-center gap-2 text-xs" style={{color:"var(--muted)"}}>
+            <span>Sent to</span>
+            <span className="font-semibold px-2 py-0.5 rounded" style={{background:"var(--surface)", color:"var(--primary)"}}>{data.invitation.email}</span>
+          </div>
+          {data.invitation.note && (
+            <p className="mt-3 text-sm italic px-4 py-3 rounded-lg" style={{background:"var(--surface)", color:"var(--muted)"}}>
+              "{data.invitation.note}"
+            </p>
+          )}
+        </div>
+
+        {/* Group overview card */}
+        <div className="card-tactile p-4 sm:p-6 mb-4">
           <div className="label-eyebrow mb-3">Group details</div>
-          <div className="grid sm:grid-cols-2 gap-4 text-sm">
-            <div><div className="label-eyebrow">Contribution</div><div className="font-display text-xl">{fmtMoney(group.contribution_amount)}</div></div>
-            <div><div className="label-eyebrow">Frequency</div><div className="font-display text-xl">{group.frequency}</div></div>
-            <div><div className="label-eyebrow">Cycles</div><div className="font-display text-xl">{group.total_cycles}</div></div>
-            <div><div className="label-eyebrow">Start date</div><div className="font-display text-xl">{fmtDate(group.start_date)}</div></div>
-            <div><div className="label-eyebrow">Due day · time</div><div className="font-display text-xl">{group.due_day} · {group.due_time}</div></div>
-            <div><div className="label-eyebrow">Late fee</div><div className="font-display text-xl">{fmtMoney(group.late_fee_amount)}</div></div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+            {[
+              ["Contribution", fmtMoney(group.contribution_amount)],
+              ["Frequency",    group.frequency],
+              ["Total cycles", group.total_cycles],
+              ["Start date",   fmtDate(group.start_date)],
+              ["Due day",      `${group.due_day} · ${group.due_time}`],
+              ["Late fee",     fmtMoney(group.late_fee_amount)],
+            ].map(([label, val]) => (
+              <div key={label} className="bg-white/60 rounded-lg p-3">
+                <div className="label-eyebrow mb-1">{label}</div>
+                <div className="font-display text-base leading-tight">{val}</div>
+              </div>
+            ))}
           </div>
           {group.description && <p className="text-sm mt-4" style={{color:"var(--muted)"}}>{group.description}</p>}
-        </section>
+        </div>
 
-        <section className="card-tactile p-6 mt-6" data-testid="rules-section">
+        {/* Rules */}
+        <div className="card-tactile p-4 sm:p-6 mb-4" data-testid="rules-section">
           <div className="label-eyebrow mb-3">Group rules</div>
           {group.rules_text ? (
             <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">{group.rules_text}</pre>
           ) : (
-            <ul className="text-sm space-y-2 list-disc pl-5" style={{color:"var(--text)"}}>
+            <ul className="text-sm space-y-2 list-disc pl-5 leading-relaxed" style={{color:"var(--text)"}}>
               <li>Contribute {fmtMoney(group.contribution_amount)} {group.frequency} by the {group.due_day} of each cycle.</li>
-              <li>Upload payment proof from your dashboard. An admin must approve before it counts.</li>
-              <li>Late payments may attract a {fmtMoney(group.late_fee_amount)} fee after a {group.grace_period_days}-day grace period.</li>
-              <li>Payouts follow the payout order set by the admin; one member is paid each cycle.</li>
-              <li>You cannot approve your own payments. Only admins confirm payments and payouts.</li>
-              <li>Your privacy preference is respected but always visible to the admin for accountability.</li>
+              <li>Upload payment proof from your dashboard. An admin approves before it counts.</li>
+              <li>Late payments attract a {fmtMoney(group.late_fee_amount)} fee after a {group.grace_period_days}-day grace period.</li>
+              <li>Payouts follow the order set by the admin; one member is paid each cycle.</li>
+              <li>Only admins confirm payments and payouts.</li>
             </ul>
           )}
-        </section>
+        </div>
 
-        <form onSubmit={submit} className="card-tactile p-6 mt-6" data-testid="invite-form">
-          <div className="label-eyebrow mb-3">Join this group</div>
-          {!user && (
-            <div className="grid gap-3 sm:grid-cols-2 mb-4">
-              <div>
-                <label className="label-eyebrow block mb-1">Your name</label>
-                <input required value={name} onChange={e=>setName(e.target.value)} className="w-full border rounded px-3 py-2" data-testid="invite-name" />
+        {/* Join form */}
+        <form onSubmit={submit} className="card-tactile p-4 sm:p-6" data-testid="invite-form">
+          <div className="label-eyebrow mb-4">
+            {user ? "Accept invitation" : "Create your account"}
+          </div>
+
+          {!user ? (
+            <div className="space-y-3 mb-5">
+              <div className="px-3 py-2.5 rounded-lg text-sm" style={{background:"var(--surface)"}}>
+                Signing up as <b>{data.invitation.email}</b> — this invitation is yours only.
               </div>
               <div>
-                <label className="label-eyebrow block mb-1">Create a password (6+)</label>
-                <input type="password" minLength={6} required value={password} onChange={e=>setPassword(e.target.value)} className="w-full border rounded px-3 py-2" data-testid="invite-password" />
+                <label className="form-label">Full name</label>
+                <input required value={name} onChange={e=>setName(e.target.value)} className="form-input" placeholder="e.g. Amaka Osei" data-testid="invite-name" />
               </div>
-              <div className="sm:col-span-2 text-xs" style={{color:"var(--muted)"}}>Account will be created with <b>{data.invitation.email}</b>.</div>
+              <div>
+                <label className="form-label">Create a password <span className="font-normal">(6+ characters)</span></label>
+                <input type="password" minLength={6} required value={password} onChange={e=>setPassword(e.target.value)} className="form-input" data-testid="invite-password" />
+              </div>
+            </div>
+          ) : (
+            <div className="px-3 py-2.5 rounded-lg text-sm mb-5" style={{background:"var(--surface)"}}>
+              Joining as <b>{user.name}</b> ({user.email})
             </div>
           )}
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input type="checkbox" checked={accepted} onChange={e=>setAcceptedRules(e.target.checked)} className="mt-1" data-testid="invite-accept-rules" />
-            <span className="text-sm">I have read and I accept the rules of <b>{group.name}</b>. I understand that an admin must approve my payments and that I cannot self-join or modify group rules.</span>
+
+          <label className="flex items-start gap-3 cursor-pointer py-1">
+            <input type="checkbox" checked={accepted} onChange={e=>setAcceptedRules(e.target.checked)}
+              className="mt-0.5 w-5 h-5 shrink-0" data-testid="invite-accept-rules" />
+            <span className="text-sm leading-snug">
+              I have read and accept the rules of <b>{group.name}</b>. I understand an admin must approve my payments and I cannot modify group rules.
+            </span>
           </label>
-          {err && <div className="text-sm text-red-700 mt-3" data-testid="invite-error">{err}</div>}
-          <button disabled={busy || !accepted} className="btn-primary mt-5 w-full" data-testid="invite-submit">
-            {busy ? "Joining…" : user ? "Accept and join" : "Create account and join"}
+
+          {err && (
+            <div className="mt-3 px-3 py-2.5 rounded-lg text-sm font-medium" style={{background:"#fef2f2", color:"#b91c1c"}} data-testid="invite-error">
+              {err}
+            </div>
+          )}
+
+          <button disabled={busy || !accepted} className="btn-primary mt-5 w-full text-base" data-testid="invite-submit">
+            {busy ? "Joining…" : user ? "Accept & join group" : "Create account & join"}
           </button>
+
+          {!user && (
+            <p className="text-xs text-center mt-3" style={{color:"var(--muted)"}}>
+              Already have an account?{" "}
+              <Link to={`/login?next=/invite/${token}`} className="underline font-medium">Sign in</Link>
+            </p>
+          )}
         </form>
       </main>
     </div>

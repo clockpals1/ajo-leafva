@@ -233,18 +233,22 @@ export default function AdminGroupDetail() {
                 </tbody>
               </table>
             </div>
-            <form onSubmit={addMember} className="card-tactile p-5" data-testid="add-member-form">
+            <form onSubmit={addMember} className="card-tactile p-4 sm:p-5" data-testid="add-member-form">
               <h3 className="font-display text-lg mb-3 flex items-center gap-2"><UserPlus size={16}/> Add member</h3>
-              <label className="label-eyebrow block mb-1">Member email</label>
-              <select required value={addEmail} onChange={e=>setAddEmail(e.target.value)} className="w-full border rounded px-3 py-2 bg-white mb-3" data-testid="add-email">
-                <option value="">— Select existing user —</option>
-                {availableUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}</option>)}
-              </select>
-              <label className="label-eyebrow block mb-1">Payout position (optional)</label>
-              <input type="number" value={addPos} onChange={e=>setAddPos(e.target.value)} className="w-full border rounded px-3 py-2 mb-3" data-testid="add-position"/>
-              {err && <div className="text-red-700 text-sm mb-2" data-testid="add-error">{err}</div>}
+              <div className="mb-3">
+                <label className="form-label">Member</label>
+                <select required value={addEmail} onChange={e=>setAddEmail(e.target.value)} className="form-input" data-testid="add-email">
+                  <option value="">— Select existing user —</option>
+                  {availableUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}</option>)}
+                </select>
+              </div>
+              <div className="mb-3">
+                <label className="form-label">Payout position <span className="font-normal">(optional)</span></label>
+                <input type="number" value={addPos} onChange={e=>setAddPos(e.target.value)} className="form-input" data-testid="add-position"/>
+              </div>
+              {err && <div className="px-3 py-2 rounded-lg text-sm text-red-700 mb-3" style={{background:"#fef2f2"}} data-testid="add-error">{err}</div>}
               <button className="btn-primary text-sm w-full" data-testid="add-submit">Add to group</button>
-              <p className="text-xs mt-3" style={{color:"var(--muted)"}}>Only existing platform users can be added. They must register first.</p>
+              <p className="text-xs mt-3" style={{color:"var(--muted)"}}>Only existing platform users. New members should use the Invitations tab.</p>
             </form>
           </div>
         )}
@@ -284,8 +288,42 @@ export default function AdminGroupDetail() {
         )}
 
         {tab === "payouts" && (
-          <div className="card-tactile overflow-hidden">
-            <table className="w-full text-sm" data-testid="payouts-table">
+          <div className="card-tactile overflow-hidden" data-testid="payouts-table">
+            {/* Mobile payout cards */}
+            <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+              {cycles.map(c => {
+                const recipient = members.find(m=>m.user_id===c.payout_user_id);
+                const recUser = userMap[c.payout_user_id];
+                const bankStr = recUser?.bank_account_number
+                  ? `${recUser.bank_name} — ${recUser.bank_account_number} (${recUser.bank_account_name})`
+                  : null;
+                return (
+                  <div key={c.id} className="p-4">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div>
+                        <div className="font-semibold text-sm">Cycle #{c.cycle_no}</div>
+                        <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{fmtDate(c.due_date)}</div>
+                      </div>
+                      <span className={`badge shrink-0 ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
+                    </div>
+                    {recipient && <div className="text-sm font-medium">{recipient.user_name}</div>}
+                    {bankStr ? (
+                      <div className="flex items-center gap-1 mt-1 text-xs" style={{color:"var(--muted)"}}>
+                        <span className="truncate">{recUser.bank_name} · {recUser.bank_account_number}</span>
+                        <button onClick={()=>copyText(bankStr)} title="Copy" className="opacity-50 shrink-0"><Copy size={10}/></button>
+                      </div>
+                    ) : <div className="text-xs mt-1" style={{color:"var(--muted)"}}>No bank on file</div>}
+                    {c.payout_status !== "completed" && c.payout_user_id && (
+                      <button onClick={()=>confirmPayout(c.cycle_no)} className="btn-primary w-full !py-2.5 text-sm inline-flex items-center justify-center gap-1 mt-3" data-testid={`payout-${c.cycle_no}`}>
+                        <Check size={14}/> Confirm payout
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {/* Desktop table */}
+            <table className="desktop-table w-full text-sm">
               <thead className="bg-white/50"><tr className="text-left">
                 <th className="px-4 py-3 label-eyebrow">Cycle</th>
                 <th className="px-4 py-3 label-eyebrow">Due date</th>
@@ -336,39 +374,39 @@ export default function AdminGroupDetail() {
         )}
 
         {tab === "settings" && editData && (
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="card-tactile p-6 space-y-4">
+          <div className="grid md:grid-cols-2 gap-4 sm:gap-6">
+            <div className="card-tactile p-4 sm:p-6 space-y-4">
               <h3 className="font-display text-lg flex items-center gap-2"><Pencil size={15}/> Basic details</h3>
               <div>
-                <label className="label-eyebrow block mb-1">Group name</label>
-                <input value={editData.name||""} onChange={e=>setField("name",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                <label className="form-label">Group name</label>
+                <input value={editData.name||""} onChange={e=>setField("name",e.target.value)} className="form-input"/>
               </div>
               <div>
-                <label className="label-eyebrow block mb-1">Description</label>
-                <textarea rows={2} value={editData.description||""} onChange={e=>setField("description",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                <label className="form-label">Description</label>
+                <textarea rows={2} value={editData.description||""} onChange={e=>setField("description",e.target.value)} className="form-input"/>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label-eyebrow block mb-1">Contribution (₦)</label>
-                  <input type="number" value={editData.contribution_amount||""} onChange={e=>setField("contribution_amount",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">Contribution (₦)</label>
+                  <input type="number" value={editData.contribution_amount||""} onChange={e=>setField("contribution_amount",Number(e.target.value))} className="form-input"/>
                 </div>
                 <div>
-                  <label className="label-eyebrow block mb-1">Member limit</label>
-                  <input type="number" value={editData.member_limit||""} onChange={e=>setField("member_limit",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">Member limit</label>
+                  <input type="number" value={editData.member_limit||""} onChange={e=>setField("member_limit",Number(e.target.value))} className="form-input"/>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label-eyebrow block mb-1">Frequency</label>
-                  <select value={editData.frequency||"monthly"} onChange={e=>setField("frequency",e.target.value)} className="w-full border rounded px-3 py-2 bg-white">
+                  <label className="form-label">Frequency</label>
+                  <select value={editData.frequency||"monthly"} onChange={e=>setField("frequency",e.target.value)} className="form-input">
                     <option value="monthly">Monthly</option>
                     <option value="weekly">Weekly</option>
                     <option value="biweekly">Bi-weekly</option>
                   </select>
                 </div>
                 <div>
-                  <label className="label-eyebrow block mb-1">Status</label>
-                  <select value={editData.status||"active"} onChange={e=>setField("status",e.target.value)} className="w-full border rounded px-3 py-2 bg-white">
+                  <label className="form-label">Status</label>
+                  <select value={editData.status||"active"} onChange={e=>setField("status",e.target.value)} className="form-input">
                     <option value="active">Active</option>
                     <option value="paused">Paused</option>
                     <option value="completed">Completed</option>
@@ -377,70 +415,70 @@ export default function AdminGroupDetail() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="label-eyebrow block mb-1">Due day</label>
-                  <input type="number" min={1} max={31} value={editData.due_day||1} onChange={e=>setField("due_day",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">Due day</label>
+                  <input type="number" min={1} max={31} value={editData.due_day||1} onChange={e=>setField("due_day",Number(e.target.value))} className="form-input"/>
                 </div>
                 <div>
-                  <label className="label-eyebrow block mb-1">Due time</label>
-                  <input type="time" value={editData.due_time||"23:59"} onChange={e=>setField("due_time",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">Due time</label>
+                  <input type="time" value={editData.due_time||"23:59"} onChange={e=>setField("due_time",e.target.value)} className="form-input"/>
                 </div>
               </div>
             </div>
 
-            <div className="space-y-6">
-              <div className="card-tactile p-6 space-y-4">
+            <div className="space-y-4 sm:space-y-6">
+              <div className="card-tactile p-4 sm:p-6 space-y-4">
                 <h3 className="font-display text-lg">Fees &amp; rules</h3>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="label-eyebrow block mb-1">First-payment fee (₦)</label>
-                    <input type="number" value={editData.first_payment_fee||0} onChange={e=>setField("first_payment_fee",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                    <label className="form-label">First-payment fee (₦)</label>
+                    <input type="number" value={editData.first_payment_fee||0} onChange={e=>setField("first_payment_fee",Number(e.target.value))} className="form-input"/>
                   </div>
                   <div>
-                    <label className="label-eyebrow block mb-1">Late fee</label>
-                    <input type="number" value={editData.late_fee_amount||0} onChange={e=>setField("late_fee_amount",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                    <label className="form-label">Late fee (₦)</label>
+                    <input type="number" value={editData.late_fee_amount||0} onChange={e=>setField("late_fee_amount",Number(e.target.value))} className="form-input"/>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="label-eyebrow block mb-1">Late fee method</label>
-                    <select value={editData.late_fee_method||"fixed"} onChange={e=>setField("late_fee_method",e.target.value)} className="w-full border rounded px-3 py-2 bg-white">
+                    <label className="form-label">Late fee method</label>
+                    <select value={editData.late_fee_method||"fixed"} onChange={e=>setField("late_fee_method",e.target.value)} className="form-input">
                       <option value="fixed">Fixed</option>
                       <option value="percent">Percent</option>
                     </select>
                   </div>
                   <div>
-                    <label className="label-eyebrow block mb-1">Grace period (days)</label>
-                    <input type="number" min={0} value={editData.grace_period_days||0} onChange={e=>setField("grace_period_days",Number(e.target.value))} className="w-full border rounded px-3 py-2"/>
+                    <label className="form-label">Grace period (days)</label>
+                    <input type="number" min={0} value={editData.grace_period_days||0} onChange={e=>setField("grace_period_days",Number(e.target.value))} className="form-input"/>
                   </div>
                 </div>
                 <div>
-                  <label className="label-eyebrow block mb-1">Rules text</label>
-                  <textarea rows={3} value={editData.rules_text||""} onChange={e=>setField("rules_text",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">Rules text</label>
+                  <textarea rows={3} value={editData.rules_text||""} onChange={e=>setField("rules_text",e.target.value)} className="form-input"/>
                 </div>
                 <div>
-                  <label className="label-eyebrow block mb-1">Payment account details</label>
-                  <input value={editData.payment_account_details||""} onChange={e=>setField("payment_account_details",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">Payment account details</label>
+                  <input value={editData.payment_account_details||""} onChange={e=>setField("payment_account_details",e.target.value)} className="form-input"/>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="enable_comments" checked={!!editData.enable_comments} onChange={e=>setField("enable_comments",e.target.checked)} className="w-4 h-4"/>
-                  <label htmlFor="enable_comments" className="text-sm">Enable member comments</label>
-                </div>
+                <label className="flex items-center gap-2.5 cursor-pointer py-1">
+                  <input type="checkbox" id="enable_comments" checked={!!editData.enable_comments} onChange={e=>setField("enable_comments",e.target.checked)} className="w-5 h-5"/>
+                  <span className="text-sm">Enable member comments</span>
+                </label>
               </div>
 
-              <div className="card-tactile p-6 space-y-4">
+              <div className="card-tactile p-4 sm:p-6 space-y-4">
                 <h3 className="font-display text-lg">WhatsApp</h3>
                 <div>
-                  <label className="label-eyebrow block mb-1">Invite link</label>
-                  <input value={editData.whatsapp_invite_link||""} onChange={e=>setField("whatsapp_invite_link",e.target.value)} className="w-full border rounded px-3 py-2" placeholder="https://chat.whatsapp.com/..."/>
+                  <label className="form-label">Invite link</label>
+                  <input value={editData.whatsapp_invite_link||""} onChange={e=>setField("whatsapp_invite_link",e.target.value)} className="form-input" placeholder="https://chat.whatsapp.com/..."/>
                 </div>
                 <div>
-                  <label className="label-eyebrow block mb-1">WhatsApp group name</label>
-                  <input value={editData.whatsapp_group_name||""} onChange={e=>setField("whatsapp_group_name",e.target.value)} className="w-full border rounded px-3 py-2"/>
+                  <label className="form-label">WhatsApp group name</label>
+                  <input value={editData.whatsapp_group_name||""} onChange={e=>setField("whatsapp_group_name",e.target.value)} className="form-input"/>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <button onClick={saveGroup} disabled={saving} className="btn-primary flex items-center gap-2">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                <button onClick={saveGroup} disabled={saving} className="btn-primary w-full sm:w-auto flex items-center justify-center gap-2">
                   <Save size={15}/>{saving ? "Saving…" : "Save changes"}
                 </button>
                 {saveMsg && <span className="text-sm" style={{color: saveMsg==="Saved!" ? "var(--primary)" : "#b91c1c"}}>{saveMsg}</span>}
