@@ -4,7 +4,7 @@ import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import {
   Plus, Users, UserCheck, Clock, AlertTriangle, TrendingUp,
-  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X,
+  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X, Trash2,
 } from "lucide-react";
 
 const ACTION_COLORS = {
@@ -96,6 +96,14 @@ export default function AdminDashboard() {
       setAddUserForm({ name: "", email: "", password: "", role: "member" });
       load();
     } catch (e) { setAddUserErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const deleteGroup = async (g) => {
+    if (!window.confirm(`Delete "${g.name}"?\n\nThis will permanently remove the group, all members, cycles, payments and history. This cannot be undone.`)) return;
+    try {
+      await api.delete(`/admin/groups/${g.id}`);
+      load();
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
   const changeRole = async (userId, newRole) => {
@@ -327,7 +335,18 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-4 py-3 text-sm" style={{color:"var(--muted)"}}>{fmtDate(g.start_date)}</td>
                       <td className="px-4 py-3 text-right">
-                        <Link to={`/admin/groups/${g.id}`} className="btn-secondary !py-1.5 !px-3 text-xs" data-testid={`manage-${g.id}`}>Manage</Link>
+                        <div className="flex items-center justify-end gap-2">
+                          <Link to={`/admin/groups/${g.id}`} className="btn-secondary !py-1.5 !px-3 text-xs" data-testid={`manage-${g.id}`}>Manage</Link>
+                          <button
+                            onClick={() => deleteGroup(g)}
+                            className="!py-1.5 !px-2.5 text-xs rounded border flex items-center gap-1 transition-colors"
+                            style={{color:"#b91c1c", borderColor:"#fecaca", background:"#fef2f2"}}
+                            title="Delete group"
+                            data-testid={`delete-${g.id}`}
+                          >
+                            <Trash2 size={12}/>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

@@ -337,6 +337,21 @@ async def get_group_admin(group_id: str, admin=Depends(require_admin)):
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
     return {"group": g, "members": members, "cycles": cycles}
 
+@api.delete("/admin/groups/{group_id}")
+async def delete_group(group_id: str, admin=Depends(require_admin)):
+    g = await db.groups.find_one({"id": group_id})
+    if not g:
+        raise HTTPException(404, "Group not found")
+    await db.groups.delete_one({"id": group_id})
+    await db.group_members.delete_many({"group_id": group_id})
+    await db.cycles.delete_many({"group_id": group_id})
+    await db.member_cycle_status.delete_many({"group_id": group_id})
+    await db.payments.delete_many({"group_id": group_id})
+    await db.invitations.delete_many({"group_id": group_id})
+    await db.group_comments.delete_many({"group_id": group_id})
+    await log_audit(admin["id"], "group_deleted", target=group_id, meta={"name": g.get("name", "")})
+    return {"ok": True}
+
 @api.post("/admin/groups/{group_id}/members")
 async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin)):
     group = await db.groups.find_one({"id": group_id})
