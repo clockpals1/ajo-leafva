@@ -81,7 +81,7 @@ export default function AdminGroupDetail() {
     finally { setSaving(false); setTimeout(() => setSaveMsg(""), 3000); }
   };
 
-  if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10">Loading...</div></div>;
+  if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="page-main">Loading...</div></div>;
 
   const { group, members, cycles, statuses } = data;
   const memberIds = new Set(members.map(m=>m.user_id));
@@ -116,32 +116,36 @@ export default function AdminGroupDetail() {
   return (
     <div className="min-h-screen bg-app">
       <TopNav />
-      <main className="max-w-7xl mx-auto px-6 py-10">
+      <main className="page-main">
         <Link to="/admin" className="text-sm" style={{color:"var(--muted)"}} data-testid="back-admin">← Back to admin</Link>
-        <div className="flex items-start justify-between mt-2 mb-8">
-          <div>
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mt-2 mb-6 sm:mb-8">
+          <div className="min-w-0">
             <div className="label-eyebrow">{group.frequency} · {group.total_cycles} cycles</div>
-            <h1 className="font-display text-4xl">{group.name}</h1>
-            <p className="text-sm mt-1" style={{color:"var(--muted)"}}>{group.description}</p>
+            <h1 className="font-display text-2xl sm:text-4xl mt-1">{group.name}</h1>
+            {group.description && <p className="text-sm mt-1" style={{color:"var(--muted)"}}>{group.description}</p>}
           </div>
-          <div className="card-tactile p-5 min-w-[220px]">
-            <div className="label-eyebrow">Contribution</div>
-            <div className="font-display text-3xl mt-1">{fmtMoney(group.contribution_amount)}</div>
-            <div className="text-xs mt-2" style={{color:"var(--muted)"}}>{members.length}/{group.member_limit} members</div>
-            {group.whatsapp_invite_link && (
-              <a href={group.whatsapp_invite_link} target="_blank" rel="noreferrer"
-                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded"
-                style={{background:"#25D36615", color:"#128C7E", border:"1px solid #25D36630"}}>
-                <ExternalLink size={11}/> WhatsApp Group
-              </a>
-            )}
+          <div className="card-tactile p-4 sm:p-5 flex sm:flex-col gap-4 sm:gap-0 sm:min-w-[200px] items-center sm:items-start shrink-0">
+            <div>
+              <div className="label-eyebrow">Contribution</div>
+              <div className="font-display text-2xl sm:text-3xl mt-0.5">{fmtMoney(group.contribution_amount)}</div>
+            </div>
+            <div>
+              <div className="text-xs" style={{color:"var(--muted)"}}>{members.length}/{group.member_limit} members</div>
+              {group.whatsapp_invite_link && (
+                <a href={group.whatsapp_invite_link} target="_blank" rel="noreferrer"
+                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded"
+                  style={{background:"#25D36615", color:"#128C7E", border:"1px solid #25D36630"}}>
+                  <ExternalLink size={11}/> WhatsApp
+                </a>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-1 border-b mb-6" style={{borderColor:"var(--border)"}}>
+        <div className="flex gap-1 border-b mb-6 overflow-x-auto scrollbar-none" style={{borderColor:"var(--border)"}}>
           {["members","invitations","ledger","payouts","comments","settings"].map(k => (
             <button key={k} onClick={()=>setTab(k)}
-              className={`px-4 py-2 text-sm border-b-2 -mb-px capitalize ${tab===k?"font-medium":"opacity-60"}`}
+              className={`px-4 py-2.5 text-sm border-b-2 -mb-px capitalize whitespace-nowrap shrink-0 ${tab===k?"font-semibold":"opacity-60"}`}
               style={{borderColor: tab===k?"var(--primary)":"transparent", color: tab===k?"var(--primary)":"var(--text)"}}
               data-testid={`gtab-${k}`}>{k}</button>
           ))}
@@ -149,8 +153,42 @@ export default function AdminGroupDetail() {
 
         {tab === "members" && (
           <div className="grid lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 card-tactile overflow-hidden">
-              <table className="w-full text-sm" data-testid="group-members-table">
+            <div className="lg:col-span-2 card-tactile overflow-hidden" data-testid="group-members-table">
+              {/* Mobile member cards */}
+              <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+                {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
+                  const u = userMap[m.user_id];
+                  const hasBank = u?.bank_name && u?.bank_account_number;
+                  return (
+                    <div key={m.id} className="p-4">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm truncate">{m.user_name}</div>
+                          <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>
+                        </div>
+                        <span className="badge s-Payout_Eligible shrink-0">#{m.payout_position}</span>
+                      </div>
+                      {hasBank ? (
+                        <div className="text-xs mt-1.5 flex items-center gap-1" style={{color:"var(--muted)"}}>
+                          <span>{u.bank_name} · {u.bank_account_number}</span>
+                          <button onClick={()=>copyText(u.bank_account_number)} title="Copy" className="opacity-50 hover:opacity-100"><Copy size={10}/></button>
+                        </div>
+                      ) : (
+                        <span className="text-xs px-2 py-0.5 rounded mt-1.5 inline-block" style={{background:"#fee2e2", color:"#991b1b"}}>Bank not set</span>
+                      )}
+                      <div className="flex items-center justify-between mt-2">
+                        <div className="text-xs" style={{color:"var(--muted)"}}>Joined {fmtDate(m.joined_at)}</div>
+                        <button onClick={()=>remove(m.user_id)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
+                          <Trash2 size={12}/> Remove
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+                {members.length===0 && <div className="px-4 py-10 text-center text-sm" style={{color:"var(--muted)"}}>No members yet.</div>}
+              </div>
+              {/* Desktop table */}
+              <table className="desktop-table w-full text-sm">
                 <thead className="bg-white/50"><tr className="text-left">
                   <th className="px-4 py-3 label-eyebrow">#</th>
                   <th className="px-4 py-3 label-eyebrow">Member</th>

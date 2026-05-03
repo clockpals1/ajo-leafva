@@ -177,8 +177,55 @@ select.form-input {
 
   .btn-primary,
   .btn-secondary {
-    min-height: 44px;
+    min-height: 48px;
   }
+
+  /* More readable body text on small screens */
+  body { font-size: 15px; }
+
+  /* Tighter headings on mobile */
+  h1.font-display { font-size: 1.75rem; line-height: 1.15; }
+  h2.font-display { font-size: 1.4rem; }
+}
+
+/* iOS safe-area support */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+/* Mobile-first page wrapper */
+.page-main {
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 2rem;
+}
+@media (min-width: 640px) {
+  .page-main { padding: 2.5rem 1.5rem 3rem; }
+}
+
+/* Mobile card divider list (replaces tables on small screens) */
+.mobile-list-card {
+  display: block;
+}
+@media (min-width: 640px) {
+  .mobile-list-card { display: none; }
+}
+
+.desktop-table {
+  display: none;
+}
+@media (min-width: 640px) {
+  .desktop-table { display: table; }
+}
+
+/* Sticky modal footer */
+.modal-footer {
+  position: sticky;
+  bottom: 0;
+  background: white;
+  border-top: 1px solid var(--border);
+  padding: 0.875rem 1.25rem;
+  margin: 0 -1.25rem -1.25rem;
+  display: flex;
+  gap: 0.75rem;
 }
 
 ::selection { background: var(--accent); color: white; }

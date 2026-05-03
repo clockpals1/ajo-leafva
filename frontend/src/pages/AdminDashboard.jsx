@@ -150,7 +150,7 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-app">
       <TopNav />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
+      <main className="page-main">
 
         {/* ── Header ── */}
         <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
@@ -265,7 +265,23 @@ export default function AdminDashboard() {
                   <button onClick={()=>setTab("approvals")} className="text-sm font-medium" style={{color:"var(--primary)"}}>View all →</button>
                 </div>
                 <div className="card-tactile overflow-hidden">
-                  <table className="w-full text-sm">
+                  {/* Mobile */}
+                  <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+                    {pending.slice(0,3).map(p => (
+                      <div key={p.id} className="p-4 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold truncate">{p.user_name}</div>
+                          <div className="text-xs truncate" style={{color:"var(--muted)"}}>{p.group_name} · Cycle #{p.cycle_no}</div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="font-display text-sm">{fmtMoney(p.amount)}</div>
+                          <button onClick={()=>openReceipt(p)} className="btn-primary !py-1.5 !px-3 text-xs mt-1.5" data-testid={`review-${p.id}`}>Review</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Desktop */}
+                  <table className="desktop-table w-full text-sm">
                     <thead className="bg-white/50">
                       <tr className="text-left">
                         <th className="px-4 py-2.5 label-eyebrow">Member</th>
@@ -296,7 +312,34 @@ export default function AdminDashboard() {
         {/* ── GROUPS ── */}
         {tab === "groups" && (
           <div className="card-tactile overflow-hidden" data-testid="groups-table">
-            <table className="w-full text-sm">
+            {/* Mobile group cards */}
+            <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+              {groups.map(g => {
+                const cycle = estCycle(g);
+                const pct = Math.round((cycle / g.total_cycles) * 100);
+                return (
+                  <div key={g.id} className="p-4">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">{g.name}</div>
+                        <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{g.frequency} · {fmtMoney(g.contribution_amount)} · {g.member_count}/{g.member_limit} members</div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Link to={`/admin/groups/${g.id}`} className="btn-secondary !py-1 !px-2.5 text-xs" data-testid={`manage-${g.id}`}>Manage</Link>
+                        <button onClick={()=>deleteGroup(g)} className="!py-1 !px-2 text-xs rounded border" style={{color:"#b91c1c",borderColor:"#fecaca",background:"#fef2f2"}} data-testid={`delete-${g.id}`}><Trash2 size={12}/></button>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs" style={{color:"var(--muted)"}}><span>Cycle progress</span><span>{cycle}/{g.total_cycles}</span></div>
+                      <div className="h-1.5 rounded-full" style={{background:"var(--border)"}}><div className="h-full rounded-full" style={{width:`${pct}%`,background:"var(--primary)",transition:"width .4s"}}/></div>
+                    </div>
+                  </div>
+                );
+              })}
+              {groups.length===0 && <div className="px-4 py-10 text-center text-sm" style={{color:"var(--muted)"}}>No groups yet.</div>}
+            </div>
+            {/* Desktop table */}
+            <table className="desktop-table w-full text-sm">
               <thead className="bg-white/50">
                 <tr className="text-left">
                   <th className="px-4 py-3 label-eyebrow">Group</th>
@@ -364,7 +407,31 @@ export default function AdminDashboard() {
         {/* ── APPROVALS ── */}
         {tab === "approvals" && (
           <div className="card-tactile overflow-hidden" data-testid="approvals-table">
-            <table className="w-full text-sm">
+            {/* Mobile approval cards */}
+            <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+              {pending.map(p => (
+                <div key={p.id} className="p-4 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm truncate">{p.user_name}</div>
+                    <div className="text-xs truncate" style={{color:"var(--muted)"}}>{p.user_email}</div>
+                    <div className="text-xs mt-1" style={{color:"var(--primary)"}}>{p.group_name} · Cycle #{p.cycle_no}</div>
+                    <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{fmtDate(p.submitted_at)}</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-display text-base">{fmtMoney(p.amount)}</div>
+                    <button onClick={()=>openReceipt(p)} className="btn-primary !py-2 !px-3 text-xs mt-2 w-full" data-testid={`review-${p.id}`}>Review</button>
+                  </div>
+                </div>
+              ))}
+              {pending.length === 0 && (
+                <div className="px-4 py-12 text-center" style={{color:"var(--muted)"}}>
+                  <CheckCircle2 className="mx-auto mb-2" size={28} style={{color:"var(--primary)", opacity:.4}} />
+                  <div className="text-sm font-medium">All caught up — no pending payments.</div>
+                </div>
+              )}
+            </div>
+            {/* Desktop table */}
+            <table className="desktop-table w-full text-sm">
               <thead className="bg-white/50">
                 <tr className="text-left">
                   <th className="px-4 py-3 label-eyebrow">Submitted</th>
@@ -403,19 +470,50 @@ export default function AdminDashboard() {
         {tab === "members" && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="relative max-w-xs flex-1 min-w-[180px]">
+              <div className="relative flex-1 min-w-[160px]">
                 <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{color:"var(--muted)"}} />
                 <input value={memberSearch} onChange={e=>setMemberSearch(e.target.value)}
-                  placeholder="Search by name or email…"
+                  placeholder="Search name or email…"
                   className="w-full border rounded pl-8 pr-3 py-2 bg-white text-sm" />
               </div>
-              <span className="text-sm" style={{color:"var(--muted)"}}>{filteredUsers.length} user{filteredUsers.length !== 1 ? "s" : ""}</span>
-              <button onClick={()=>setAddUserOpen(true)} className="btn-primary text-sm inline-flex items-center gap-1.5 ml-auto">
+              <span className="text-sm shrink-0" style={{color:"var(--muted)"}}>{filteredUsers.length} user{filteredUsers.length !== 1 ? "s" : ""}</span>
+              <button onClick={()=>setAddUserOpen(true)} className="btn-primary text-sm inline-flex items-center gap-1.5">
                 <UserPlus size={14}/> Add User
               </button>
             </div>
             <div className="card-tactile overflow-hidden" data-testid="users-table">
-              <table className="w-full text-sm">
+              {/* Mobile user cards */}
+              <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+                {filteredUsers.map(u => {
+                  const hasBank = u.bank_name && u.bank_account_number;
+                  return (
+                    <div key={u.id} className="p-4">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm truncate">{u.name}</div>
+                          <div className="text-xs truncate" style={{color:"var(--muted)"}}>{u.email}</div>
+                        </div>
+                        <select
+                          value={u.role}
+                          disabled={roleUpdating === u.id}
+                          onChange={e => changeRole(u.id, e.target.value)}
+                          className="text-xs border rounded px-2 py-1 bg-white shrink-0"
+                          style={{color:"var(--primary)", fontWeight:600}}
+                        >
+                          <option value="member">member</option>
+                          <option value="admin">admin</option>
+                          <option value="super_admin">super_admin</option>
+                        </select>
+                      </div>
+                      {hasBank
+                        ? <div className="text-xs" style={{color:"var(--muted)"}}>{u.bank_name} · {u.bank_account_number}</div>
+                        : <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2",color:"#991b1b"}}>Bank not set</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Desktop table */}
+              <table className="desktop-table w-full text-sm">
                 <thead className="bg-white/50">
                   <tr className="text-left">
                     <th className="px-4 py-3 label-eyebrow">Name</th>

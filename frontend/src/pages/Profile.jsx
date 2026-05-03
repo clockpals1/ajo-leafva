@@ -27,61 +27,59 @@ export default function Profile() {
   return (
     <div className="min-h-screen bg-app">
       <TopNav />
-      <main className="max-w-2xl mx-auto px-6 py-10">
-        <div className="label-eyebrow mb-2">Profile</div>
-        <h1 className="font-display text-3xl mb-8">Your account</h1>
-        <form onSubmit={submit} className="space-y-6" data-testid="profile-form">
+      <main className="page-main max-w-2xl mx-auto">
+        <div className="label-eyebrow mb-1">Profile</div>
+        <h1 className="font-display text-2xl sm:text-3xl mb-6 sm:mb-8">Your account</h1>
+        <form onSubmit={submit} className="space-y-4 sm:space-y-6" data-testid="profile-form">
 
-          <section className="card-tactile p-6 space-y-4">
+          <section className="card-tactile p-4 sm:p-6 space-y-4">
             <div className="label-eyebrow">Identity</div>
             <div>
-              <label className="text-xs block mb-1" style={{color:"var(--muted)"}}>Full name (admins see this)</label>
+              <label className="form-label">Full name <span className="font-normal">(admins see this)</span></label>
               <input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}
-                className="w-full bg-white border rounded px-3 py-2" data-testid="profile-name" />
+                className="form-input" data-testid="profile-name" />
             </div>
             <div>
-              <label className="text-xs block mb-1" style={{color:"var(--muted)"}}>Phone</label>
+              <label className="form-label">Phone</label>
               <input type="tel" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}
-                className="w-full bg-white border rounded px-3 py-2" data-testid="profile-phone" />
+                className="form-input" data-testid="profile-phone" />
             </div>
           </section>
 
-          <section className="card-tactile p-6 space-y-4">
+          <section className="card-tactile p-4 sm:p-6 space-y-4">
             <div className="label-eyebrow">Privacy</div>
             <div>
-              <label className="text-xs block mb-1" style={{color:"var(--muted)"}}>Display name / Alias (shown to other members)</label>
+              <label className="form-label">Display name / Alias <span className="font-normal">(shown to other members)</span></label>
               <input value={form.display_name} onChange={e=>setForm({...form,display_name:e.target.value})}
-                placeholder="e.g. AjoChamp"
-                className="w-full bg-white border rounded px-3 py-2" data-testid="profile-display-name" />
+                placeholder="e.g. AjoChamp" className="form-input" data-testid="profile-display-name" />
             </div>
-            <label className="flex items-start gap-3 cursor-pointer">
+            <label className="flex items-start gap-3 cursor-pointer py-1">
               <input type="checkbox" checked={form.use_alias} onChange={e=>setForm({...form, use_alias: e.target.checked})}
-                className="mt-1" data-testid="profile-use-alias" />
+                className="mt-1 w-5 h-5 shrink-0" data-testid="profile-use-alias" />
               <span className="text-sm">
                 <b>Use my display name in groups.</b>
                 <span className="block text-xs mt-1" style={{color:"var(--muted)"}}>
-                  Other members will see your alias in the chat, members table and activity feed.
-                  Admins always see your real name for accountability.
+                  Other members will see your alias. Admins always see your real name.
                 </span>
               </span>
             </label>
             <div>
-              <label className="text-xs block mb-1" style={{color:"var(--muted)"}}>Visibility preference (admin approval required)</label>
+              <label className="form-label">Visibility preference <span className="font-normal">(admin approval required)</span></label>
               <select value={form.visibility_preference} onChange={e=>setForm({...form,visibility_preference:e.target.value})}
-                className="w-full bg-white border rounded px-3 py-2" data-testid="profile-visibility">
+                className="form-input" data-testid="profile-visibility">
                 <option value="visible">Visible to group</option>
                 <option value="limited">Limited visibility</option>
-                <option value="hidden">Hidden from group (admin still sees)</option>
+                <option value="hidden">Hidden (admin still sees)</option>
               </select>
               {user?.visibility_status && (
-                <div className="text-xs mt-1" style={{color:"var(--muted)"}}>
-                  Current preference: <b>{user.visibility_preference}</b> · Status: <b>{user.visibility_status}</b>
+                <div className="text-xs mt-1.5" style={{color:"var(--muted)"}}>
+                  Current: <b>{user.visibility_preference}</b> · Status: <b>{user.visibility_status}</b>
                 </div>
               )}
             </div>
           </section>
 
-          <section className="card-tactile p-6 space-y-4">
+          <section className="card-tactile p-4 sm:p-6 space-y-4">
             <div className="label-eyebrow">Bank account (for payouts)</div>
             {[
               ["bank_name","Bank name"],
@@ -89,16 +87,16 @@ export default function Profile() {
               ["bank_account_name","Account name"],
             ].map(([k, l]) => (
               <div key={k}>
-                <label className="text-xs block mb-1" style={{color:"var(--muted)"}}>{l}</label>
+                <label className="form-label">{l}</label>
                 <input value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}
-                  className="w-full bg-white border rounded px-3 py-2" data-testid={`profile-${k}`} />
+                  className="form-input" data-testid={`profile-${k}`} />
               </div>
             ))}
           </section>
 
-          {err && <div className="text-red-700 text-sm" data-testid="profile-error">{err}</div>}
-          {msg && <div className="text-sm" style={{color:"var(--primary)"}} data-testid="profile-msg">{msg}</div>}
-          <button className="btn-primary" data-testid="profile-save">Save changes</button>
+          {err && <div className="text-red-700 text-sm px-1" data-testid="profile-error">{err}</div>}
+          {msg && <div className="text-sm px-1" style={{color:"var(--primary)"}} data-testid="profile-msg">{msg}</div>}
+          <button className="btn-primary w-full sm:w-auto" data-testid="profile-save">Save changes</button>
         </form>
       </main>
     </div>

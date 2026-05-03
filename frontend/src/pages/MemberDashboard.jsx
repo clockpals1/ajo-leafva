@@ -29,55 +29,55 @@ export default function MemberDashboard() {
   return (
     <div className="min-h-screen bg-app">
       <TopNav />
-      <main className="max-w-7xl mx-auto px-6 py-10">
-        <div className="mb-10">
-          <div className="label-eyebrow mb-2">Member Dashboard</div>
-          <h1 className="font-display text-3xl">Hello, {user?.name?.split(" ")[0] || "Member"}</h1>
+      <main className="page-main">
+        <div className="mb-6 sm:mb-10">
+          <div className="label-eyebrow mb-1">Member Dashboard</div>
+          <h1 className="font-display text-2xl sm:text-3xl">Hello, {user?.name?.split(" ")[0] || "Member"}</h1>
           <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-            Your assigned groups, payment history and contribution status.
+            Your groups, payment history and contribution status.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6 sm:mb-10">
           {[
-            { label: "Assigned groups", value: stats.groups },
-            { label: "Pending review", value: stats.pending },
+            { label: "My groups", value: stats.groups },
+            { label: "Pending", value: stats.pending },
             { label: "Approved", value: stats.approved },
             { label: "Rejected", value: stats.rejected },
           ].map((s, i) => (
-            <div key={i} className="card-tactile p-6" data-testid={`stat-${i}`}>
+            <div key={i} className="card-tactile p-4 sm:p-6" data-testid={`stat-${i}`}>
               <div className="label-eyebrow">{s.label}</div>
-              <div className="font-display text-3xl mt-2">{s.value}</div>
+              <div className="font-display text-2xl sm:text-3xl mt-1">{s.value}</div>
             </div>
           ))}
         </div>
 
-        <section className="mb-12">
-          <h2 className="font-display text-2xl mb-4">Your groups</h2>
+        <section className="mb-8 sm:mb-12">
+          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">Your groups</h2>
           {loading ? <div className="text-sm" style={{color:"var(--muted)"}}>Loading...</div> :
            groups.length === 0 ? (
-            <div className="card-tactile p-10 text-center" data-testid="empty-groups">
+            <div className="card-tactile p-8 text-center" data-testid="empty-groups">
               <Inbox className="mx-auto mb-3" style={{ color: "var(--muted)" }} />
-              <div className="font-display text-lg">Not yet assigned to any Ajo group</div>
+              <div className="font-display text-lg">Not yet in any Ajo group</div>
               <p className="text-sm mt-2" style={{ color: "var(--muted)" }}>
-                An admin will add you to a group. You'll see it here once assigned.
+                An admin will add you. You'll see it here once assigned.
               </p>
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-2 gap-3 sm:gap-4">
               {groups.map(g => (
-                <Link to={`/groups/${g.id}`} key={g.id} className="card-tactile p-6 hover-lift block" data-testid={`group-card-${g.id}`}>
-                  <div className="flex items-start justify-between">
-                    <div>
+                <Link to={`/groups/${g.id}`} key={g.id} className="card-tactile p-4 sm:p-6 hover-lift block" data-testid={`group-card-${g.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
                       <div className="label-eyebrow">{g.frequency} · {g.total_cycles} cycles</div>
-                      <div className="font-display text-xl mt-1">{g.name}</div>
-                      <div className="text-xs mt-1" style={{color:"var(--muted)"}}>{g.description}</div>
+                      <div className="font-display text-lg sm:text-xl mt-1 truncate">{g.name}</div>
+                      {g.description && <div className="text-xs mt-1 truncate" style={{color:"var(--muted)"}}>{g.description}</div>}
                     </div>
-                    <span className="badge s-Payout_Eligible">Position #{g.payout_position}</span>
+                    <span className="badge s-Payout_Eligible shrink-0">#{g.payout_position}</span>
                   </div>
-                  <div className="grid grid-cols-2 gap-3 mt-5 text-sm">
-                    <div><div className="label-eyebrow">Contribution</div><div className="font-display text-lg">{fmtMoney(g.contribution_amount)}</div></div>
-                    <div><div className="label-eyebrow">Starts</div><div className="font-display text-lg">{fmtDate(g.start_date)}</div></div>
+                  <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+                    <div><div className="label-eyebrow">Contribution</div><div className="font-display text-base sm:text-lg">{fmtMoney(g.contribution_amount)}</div></div>
+                    <div><div className="label-eyebrow">Starts</div><div className="font-display text-base sm:text-lg">{fmtDate(g.start_date)}</div></div>
                   </div>
                 </Link>
               ))}
@@ -86,12 +86,32 @@ export default function MemberDashboard() {
         </section>
 
         <section>
-          <h2 className="font-display text-2xl mb-4">Payment history</h2>
+          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">Payment history</h2>
           {payments.length === 0 ? (
-            <div className="card-tactile p-8 text-sm" style={{color:"var(--muted)"}}>No payment submissions yet.</div>
+            <div className="card-tactile p-6 text-sm" style={{color:"var(--muted)"}}>No payment submissions yet.</div>
           ) : (
             <div className="card-tactile overflow-hidden">
-              <table className="w-full text-sm" data-testid="payment-history-table">
+              {/* Mobile card list */}
+              <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
+                {payments.map(p => (
+                  <div key={p.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold">Cycle #{p.cycle_no}</div>
+                      <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{fmtDate(p.submitted_at)}</div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="font-display text-sm">{fmtMoney(p.amount)}</div>
+                      <div className="mt-1">
+                        <span className={`badge ${p.status==="approved"?"s-Paid":p.status==="rejected"?"s-Rejected":"s-Submitted"}`}>
+                          {p.status}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Desktop table */}
+              <table className="desktop-table w-full text-sm" data-testid="payment-history-table">
                 <thead className="bg-white/50">
                   <tr className="text-left">
                     <th className="px-4 py-3 label-eyebrow">Date</th>
