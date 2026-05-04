@@ -37,11 +37,11 @@ def _smtp_send_sync(host: str, port: int, user: str, password: str,
     msg["To"] = to
     msg.attach(MIMEText(html, "html"))
     if secure:
-        with smtplib.SMTP_SSL(host, port, timeout=15) as srv:
+        with smtplib.SMTP_SSL(host, port, timeout=8) as srv:
             srv.login(user, password)
             srv.sendmail(from_addr, [to], msg.as_string())
     else:
-        with smtplib.SMTP(host, port, timeout=15) as srv:
+        with smtplib.SMTP(host, port, timeout=8) as srv:
             srv.ehlo()
             srv.starttls()
             srv.ehlo()
