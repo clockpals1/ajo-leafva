@@ -1046,8 +1046,8 @@ async def accept_invite(token: str, data: AcceptIn, request: Request, response: 
 
 @api.get("/admin/groups/{group_id}/join-link")
 async def get_group_join_link(group_id: str, admin=Depends(require_admin)):
-    group = await db.groups.find_one({"id": group_id}, {"_id": 0, "join_token": 1})
-    if not group:
+    group = await db.groups.find_one({"id": group_id}, {"_id": 0, "id": 1, "join_token": 1})
+    if group is None:
         raise HTTPException(404, "Group not found")
     if not group.get("join_token"):
         new_token = uuid.uuid4().hex
