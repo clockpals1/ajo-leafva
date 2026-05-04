@@ -458,6 +458,26 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
                      cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{group_id}")
     return gm
 
+class UpdateMemberIn(BaseModel):
+    payout_position: Optional[int] = None
+
+@api.patch("/admin/groups/{group_id}/members/{user_id}")
+async def update_member(group_id: str, user_id: str, data: UpdateMemberIn, admin=Depends(require_admin)):
+    gm = await db.group_members.find_one({"group_id": group_id, "user_id": user_id})
+    if not gm:
+        raise HTTPException(404, "Member not found")
+    update: dict = {}
+    if data.payout_position is not None:
+        if data.payout_position < 1:
+            raise HTTPException(400, "Payout position must be at least 1")
+        update["payout_position"] = data.payout_position
+    if not update:
+        return {"ok": True, "changed": 0}
+    await db.group_members.update_one({"group_id": group_id, "user_id": user_id}, {"$set": update})
+    await log_audit(admin["id"], "member_updated", target=group_id,
+                    meta={"user_id": user_id, "changes": update})
+    return {"ok": True, "changed": len(update)}
+
 @api.delete("/admin/groups/{group_id}/members/{user_id}")
 async def remove_member(group_id: str, user_id: str, reason: Optional[str] = None, admin=Depends(require_admin)):
     res = await db.group_members.delete_one({"group_id": group_id, "user_id": user_id})

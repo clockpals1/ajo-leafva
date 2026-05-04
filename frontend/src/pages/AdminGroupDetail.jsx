@@ -63,6 +63,7 @@ export default function AdminGroupDetail() {
   const [messages, setMessages] = useState([]);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeReason, setRemoveReason] = useState("");
+  const [editingPos, setEditingPos] = useState({});  // { user_id: draftValue }
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -117,6 +118,21 @@ export default function AdminGroupDetail() {
       await api.post(`/admin/groups/${id}/members`, { email: addEmail, payout_position: addPos ? Number(addPos) : null });
       setAddEmail(""); setAddPos(""); load();
     } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const startEditPos = (uid, current) =>
+    setEditingPos(prev => ({ ...prev, [uid]: String(current) }));
+
+  const cancelEditPos = (uid) =>
+    setEditingPos(prev => { const n = { ...prev }; delete n[uid]; return n; });
+
+  const savePosition = async (uid) => {
+    const val = parseInt(editingPos[uid], 10);
+    if (!val || val < 1) return;
+    try {
+      await api.patch(`/admin/groups/${id}/members/${uid}`, { payout_position: val });
+      cancelEditPos(uid); load();
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
   const remove = (uid, name) => { setRemoveTarget({ uid, name }); setRemoveReason(""); };
@@ -222,7 +238,22 @@ export default function AdminGroupDetail() {
                           <div className="font-semibold text-sm truncate">{m.user_name}</div>
                           <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>
                         </div>
-                        <span className="badge s-Payout_Eligible shrink-0">#{m.payout_position}</span>
+                        {editingPos[m.user_id] !== undefined ? (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <input type="number" min={1} value={editingPos[m.user_id]}
+                              onChange={e=>setEditingPos(p=>({...p,[m.user_id]:e.target.value}))}
+                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.user_id); if(e.key==="Escape") cancelEditPos(m.user_id); }}
+                              className="w-14 border rounded px-1.5 py-1 text-sm text-center font-display" autoFocus />
+                            <button onClick={()=>savePosition(m.user_id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
+                            <button onClick={()=>cancelEditPos(m.user_id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>startEditPos(m.user_id, m.payout_position)}
+                            className="badge s-Payout_Eligible shrink-0 inline-flex items-center gap-1 cursor-pointer group"
+                            title="Click to edit payout position">
+                            #{m.payout_position} <Pencil size={9} className="opacity-0 group-hover:opacity-60" />
+                          </button>
+                        )}
                       </div>
                       {hasBank ? (
                         <div className="text-xs mt-1.5 flex items-center gap-1" style={{color:"var(--muted)"}}>
@@ -259,7 +290,24 @@ export default function AdminGroupDetail() {
                     const hasBank = u?.bank_name && u?.bank_account_number;
                     return (
                     <tr key={m.id} className="border-t" style={{borderColor:"var(--border)"}}>
-                      <td className="px-4 py-3 font-display">#{m.payout_position}</td>
+                      <td className="px-4 py-3">
+                        {editingPos[m.user_id] !== undefined ? (
+                          <div className="flex items-center gap-1">
+                            <input type="number" min={1} value={editingPos[m.user_id]}
+                              onChange={e=>setEditingPos(p=>({...p,[m.user_id]:e.target.value}))}
+                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.user_id); if(e.key==="Escape") cancelEditPos(m.user_id); }}
+                              className="w-16 border rounded px-2 py-1 text-sm text-center font-display" autoFocus />
+                            <button onClick={()=>savePosition(m.user_id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
+                            <button onClick={()=>cancelEditPos(m.user_id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>startEditPos(m.user_id, m.payout_position)}
+                            className="font-display inline-flex items-center gap-1 group opacity-90 hover:opacity-100"
+                            title="Click to edit payout position">
+                            #{m.payout_position} <Pencil size={10} className="opacity-0 group-hover:opacity-60" />
+                          </button>
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-medium">{m.user_name}</td>
                       <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{m.user_email}</td>
                       <td className="px-4 py-3">
