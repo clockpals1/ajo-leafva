@@ -14,7 +14,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-from email_service import send_email
+from email_service import send_email, send_email_with_error
 from twilio_service import send_whatsapp
 
 # ---------------- DB & APP ----------------
@@ -1395,7 +1395,7 @@ class BroadcastIn(BaseModel):
 @api.post("/admin/test-email")
 async def test_email_endpoint(admin=Depends(require_admin)):
     """Send a test email to the calling admin so they can verify SMTP / Resend config."""
-    ok = await send_email(
+    ok, err = await send_email_with_error(
         db,
         admin["email"],
         "Ajo Platform — test email",
@@ -1406,8 +1406,7 @@ async def test_email_endpoint(admin=Depends(require_admin)):
         cta_link=os.environ.get("FRONTEND_URL", ""),
     )
     if not ok:
-        raise HTTPException(500,
-            "Email delivery failed. Check SMTP host/port/user/password or your Resend API key in Settings.")
+        raise HTTPException(500, err or "Email delivery failed. Check SMTP / Resend settings.")
     return {"ok": True, "sent_to": admin["email"]}
 
 @api.post("/admin/broadcast")

@@ -1,6 +1,6 @@
 """Email helper — tries SMTP first (Hostinger/cPanel/any SMTP), falls back to Resend API.
    Configuration is read from DB settings (set via admin panel), then env vars.
-   Never raises exceptions — always returns bool."""
+   Never raises — returns (bool, error_message)."""
 import os
 import asyncio
 import logging
@@ -52,11 +52,25 @@ def _smtp_send_sync(host: str, port: int, user: str, password: str,
 async def send_email(db, to: str, subject: str, title: str, body_html: str,
                      cta_label: str = "", cta_link: str = "") -> bool:
     """Send email. SMTP first (if configured), then Resend fallback. Never raises."""
+    ok, _ = await _send_email_inner(db, to, subject, title, body_html, cta_label, cta_link)
+    return ok
+
+
+async def send_email_with_error(db, to: str, subject: str, title: str, body_html: str,
+                                cta_label: str = "", cta_link: str = ""):
+    """Like send_email but returns (bool, error_str | None). Used by test-email endpoint."""
+    return await _send_email_inner(db, to, subject, title, body_html, cta_label, cta_link)
+
+
+async def _send_email_inner(db, to: str, subject: str, title: str, body_html: str,
+                            cta_label: str = "", cta_link: str = ""):
+    """Internal implementation — returns (bool, last_error_str | None)."""
     if not to:
-        return False
+        return False, "No recipient address"
     settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
     brand = settings.get("brand_name") or "Ajo Platform"
     html = _wrap(title, body_html, cta_label, cta_link, brand)
+    last_error = None
 
     # ── 1. Try SMTP (Hostinger / cPanel / any SMTP) ──────────────────────────
     smtp_host = settings.get("smtp_host") or os.environ.get("SMTP_HOST", "")
@@ -72,23 +86,31 @@ async def send_email(db, to: str, subject: str, title: str, body_html: str,
                 smtp_from, to, subject, html, smtp_secure
             )
             logger.info(f"[smtp sent] {to} — {subject}")
-            return True
+            return True, None
         except Exception as e:
+            last_error = f"SMTP error: {e}"
             logger.warning(f"[smtp failed, trying Resend] {to} — {e}")
 
-    # ── 2. Fallback: Resend API ───────────────────────────────────────────────
+    # ── 2. Fallback: Resend API (uses native async send_async) ────────────────
     api_key = settings.get("resend_api_key") or os.environ.get("RESEND_API_KEY", "")
     sender  = settings.get("resend_sender") or os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
     if not api_key:
+        msg = "No email configured: add SMTP or Resend credentials in Settings."
         logger.info(f"[email skipped — no SMTP or Resend configured] {to} — {subject}")
-        return False
+        return False, last_error or msg
     try:
         import resend
         resend.api_key = api_key
         params = {"from": sender, "to": [to], "subject": subject, "html": html}
-        result = await asyncio.to_thread(resend.Emails.send, params)
-        logger.info(f"[resend sent] {to} — {subject} — id={result.get('id') if isinstance(result, dict) else result}")
-        return True
+        # Use the native async method (resend v2+) to avoid event-loop conflicts
+        if hasattr(resend.Emails, "send_async"):
+            result = await resend.Emails.send_async(params)
+        else:
+            result = await asyncio.to_thread(resend.Emails.send, params)
+        rid = result.get("id") if isinstance(result, dict) else getattr(result, "id", result)
+        logger.info(f"[resend sent] {to} — {subject} — id={rid}")
+        return True, None
     except Exception as e:
+        last_error = f"Resend error: {e}"
         logger.warning(f"[resend failed] {to} — {subject} — {e}")
-        return False
+        return False, last_error
