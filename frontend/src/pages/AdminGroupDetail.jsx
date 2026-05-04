@@ -58,6 +58,8 @@ export default function AdminGroupDetail() {
   const [joinToken, setJoinToken] = useState("");
   const [joinCopied, setJoinCopied] = useState(false);
   const [joinRegen, setJoinRegen] = useState(false);
+  const [joinLinkLoading, setJoinLinkLoading] = useState(false);
+  const [joinLinkErr, setJoinLinkErr] = useState("");
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -69,8 +71,15 @@ export default function AdminGroupDetail() {
     setData({ ...d, statuses: detail.statuses, cycles: detail.cycles });
     setUsers(u);
   };
-  const loadJoinLink = () =>
-    api.get(`/admin/groups/${id}/join-link`).then(r => setJoinToken(r.data.join_token)).catch(()=>{});
+  const loadJoinLink = async () => {
+    setJoinLinkLoading(true); setJoinLinkErr("");
+    try {
+      const r = await api.get(`/admin/groups/${id}/join-link`);
+      setJoinToken(r.data.join_token);
+    } catch (e) {
+      setJoinLinkErr(formatErr(e?.response?.data?.detail) || "Could not load link");
+    } finally { setJoinLinkLoading(false); }
+  };
 
   useEffect(() => { load(); loadJoinLink(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (data?.group) setEditData({ ...data.group }); }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -271,7 +280,18 @@ export default function AdminGroupDetail() {
                   </p>
                 </div>
               </div>
-              {joinToken ? (
+              {joinLinkLoading && (
+                <div className="text-sm" style={{color:"var(--muted)"}}>Loading link…</div>
+              )}
+              {!joinLinkLoading && joinLinkErr && (
+                <div className="space-y-2">
+                  <div className="px-3 py-2.5 rounded-lg text-sm" style={{background:"#fef2f2",color:"#b91c1c"}}>{joinLinkErr}</div>
+                  <button onClick={loadJoinLink} className="btn-secondary text-sm inline-flex items-center gap-1.5">
+                    <RefreshCw size={13}/> Retry
+                  </button>
+                </div>
+              )}
+              {!joinLinkLoading && !joinLinkErr && joinToken && (
                 <>
                   <div className="flex gap-2">
                     <div className="flex-1 px-3 py-2.5 rounded-lg border text-sm font-mono truncate"
@@ -311,8 +331,6 @@ export default function AdminGroupDetail() {
                     </button>
                   </div>
                 </>
-              ) : (
-                <div className="text-sm" style={{color:"var(--muted)"}}>Loading link…</div>
               )}
             </div>
 
