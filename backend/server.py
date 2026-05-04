@@ -459,11 +459,48 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
     return gm
 
 @api.delete("/admin/groups/{group_id}/members/{user_id}")
-async def remove_member(group_id: str, user_id: str, admin=Depends(require_admin)):
+async def remove_member(group_id: str, user_id: str, reason: Optional[str] = None, admin=Depends(require_admin)):
     res = await db.group_members.delete_one({"group_id": group_id, "user_id": user_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Member not found")
-    await log_audit(admin["id"], "member_removed", target=group_id, meta={"user_id": user_id})
+    await log_audit(admin["id"], "member_removed", target=group_id,
+                    meta={"user_id": user_id, "reason": reason or ""})
+    return {"ok": True}
+
+# ---------------- PRIVATE MEMBER MESSAGES ----------------
+class MemberMessageIn(BaseModel):
+    subject: str
+    body: str
+
+@api.post("/groups/{group_id}/message-admin")
+async def send_message_to_admin(group_id: str, data: MemberMessageIn, user=Depends(get_current_user)):
+    gm = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
+    if not gm:
+        raise HTTPException(403, "Not a member of this group")
+    if not data.subject.strip() or not data.body.strip():
+        raise HTTPException(400, "Subject and body are required")
+    msg = {
+        "id": str(uuid.uuid4()),
+        "group_id": group_id,
+        "from_user_id": user["id"],
+        "from_user_name": user["name"],
+        "from_user_email": user["email"],
+        "subject": data.subject.strip(),
+        "body": data.body.strip(),
+        "read": False,
+        "created_at": now_utc().isoformat(),
+    }
+    await db.member_messages.insert_one(msg.copy())
+    return {"ok": True}
+
+@api.get("/admin/groups/{group_id}/member-messages")
+async def list_member_messages(group_id: str, admin=Depends(require_admin)):
+    items = await db.member_messages.find({"group_id": group_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return items
+
+@api.patch("/admin/member-messages/{msg_id}/read")
+async def mark_message_read(msg_id: str, admin=Depends(require_admin)):
+    await db.member_messages.update_one({"id": msg_id}, {"$set": {"read": True}})
     return {"ok": True}
 
 # ---------------- PAYMENTS ----------------
@@ -783,6 +820,12 @@ class SettingsIn(BaseModel):
     twilio_auth_token: Optional[str] = None
     twilio_whatsapp_from: Optional[str] = None
     frontend_url: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    smtp_secure: Optional[bool] = None
 
 def _mask(v: str) -> str:
     if not v: return ""
@@ -803,6 +846,13 @@ async def get_settings(admin=Depends(require_admin)):
         "frontend_url": s.get("frontend_url") or "",
         "has_resend": bool(s.get("resend_api_key")),
         "has_twilio": bool(s.get("twilio_account_sid") and s.get("twilio_auth_token") and s.get("twilio_whatsapp_from")),
+        "smtp_host": s.get("smtp_host") or "",
+        "smtp_port": s.get("smtp_port") or 587,
+        "smtp_user": s.get("smtp_user") or "",
+        "smtp_from": s.get("smtp_from") or "",
+        "smtp_secure": bool(s.get("smtp_secure", False)),
+        "smtp_password_masked": _mask(s.get("smtp_password", "")),
+        "has_smtp": bool(s.get("smtp_host") and s.get("smtp_user") and s.get("smtp_password")),
     }
 
 @api.put("/admin/settings")

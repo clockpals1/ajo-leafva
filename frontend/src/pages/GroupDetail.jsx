@@ -5,7 +5,7 @@ import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
 import Comments from "../components/Comments";
 import { useAuth } from "../AuthContext";
-import { Upload } from "lucide-react";
+import { Upload, MessageCircle, X } from "lucide-react";
 
 export default function GroupDetail() {
   const { id } = useParams();
@@ -13,6 +13,23 @@ export default function GroupDetail() {
   const nav = useNavigate();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+
+  // Message admin modal state
+  const [msgOpen, setMsgOpen] = useState(false);
+  const [msgSubject, setMsgSubject] = useState("");
+  const [msgBody, setMsgBody] = useState("");
+  const [msgBusy, setMsgBusy] = useState(false);
+  const [msgDone, setMsgDone] = useState(false);
+
+  const sendMsgToAdmin = async (e) => {
+    e.preventDefault(); setMsgBusy(true);
+    try {
+      await api.post(`/groups/${id}/message-admin`, { subject: msgSubject, body: msgBody });
+      setMsgDone(true); setMsgSubject(""); setMsgBody("");
+      setTimeout(() => { setMsgOpen(false); setMsgDone(false); }, 1800);
+    } catch (err) { alert(formatErr(err?.response?.data?.detail)); }
+    finally { setMsgBusy(false); }
+  };
 
   // Upload modal state
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -228,6 +245,18 @@ export default function GroupDetail() {
             <Comments groupId={id} />
           </section>
         )}
+
+        {/* Floating message-admin button (members only) */}
+        {!isAdmin && (
+          <button
+            onClick={() => setMsgOpen(true)}
+            className="fixed bottom-6 right-5 z-40 w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
+            style={{background:"var(--primary)",color:"#fff"}}
+            title="Message admin"
+            data-testid="msg-admin-fab">
+            <MessageCircle size={22}/>
+          </button>
+        )}
       </main>
 
       {/* Upload modal — full screen slide-up on mobile */}
@@ -260,6 +289,47 @@ export default function GroupDetail() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Message admin modal */}
+      {msgOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onClick={()=>setMsgOpen(false)}>
+          <div onClick={e=>e.stopPropagation()}
+            className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-xl p-5 sm:p-6 max-h-[90vh] overflow-y-auto"
+            data-testid="msg-admin-modal">
+            <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4 sm:hidden" />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-xl">Message admin</h3>
+              <button onClick={()=>setMsgOpen(false)} className="p-1 rounded opacity-60 hover:opacity-100"><X size={18}/></button>
+            </div>
+            {msgDone ? (
+              <div className="py-8 text-center">
+                <div className="text-3xl mb-2">✓</div>
+                <div className="font-medium">Message sent!</div>
+                <div className="text-sm mt-1" style={{color:"var(--muted)"}}>The admin will see it in their dashboard.</div>
+              </div>
+            ) : (
+              <form onSubmit={sendMsgToAdmin} className="space-y-4">
+                <div>
+                  <label className="form-label">Subject</label>
+                  <input required value={msgSubject} onChange={e=>setMsgSubject(e.target.value)}
+                    className="form-input" placeholder="e.g. Question about my payment" data-testid="msg-subject" />
+                </div>
+                <div>
+                  <label className="form-label">Message</label>
+                  <textarea required rows={4} value={msgBody} onChange={e=>setMsgBody(e.target.value)}
+                    className="form-input" placeholder="Type your message here…" data-testid="msg-body" />
+                </div>
+                <div className="flex gap-3">
+                  <button type="button" onClick={()=>setMsgOpen(false)} className="btn-secondary flex-1 text-sm">Cancel</button>
+                  <button type="submit" disabled={msgBusy} className="btn-primary flex-1 text-sm" data-testid="msg-send">
+                    {msgBusy ? "Sending…" : "Send message"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       )}
     </div>

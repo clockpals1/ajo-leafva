@@ -16,6 +16,9 @@ export default function AdminSettings() {
       resend_sender: data.resend_sender, resend_api_key: "",
       twilio_account_sid: "", twilio_auth_token: "", twilio_whatsapp_from: data.twilio_whatsapp_from,
       frontend_url: data.frontend_url,
+      smtp_host: data.smtp_host, smtp_port: String(data.smtp_port || 587),
+      smtp_user: data.smtp_user, smtp_password: "",
+      smtp_from: data.smtp_from, smtp_secure: data.smtp_secure || false,
     });
   };
   useEffect(() => { load(); }, []);
@@ -53,6 +56,24 @@ export default function AdminSettings() {
             <Field label="API key (set / replace)" value={form.resend_api_key} onChange={v=>setForm({...form, resend_api_key:v})} testid="setting-resend-key" placeholder="re_..." />
             <Field label="Sender email" value={form.resend_sender||""} onChange={v=>setForm({...form, resend_sender:v})} testid="setting-resend-sender" placeholder="noreply@yourdomain.com" />
             <p className="text-xs" style={{color:"var(--muted)"}}>Domain must be DNS-verified on Resend to deliver reliably.</p>
+          </Section>
+
+          <Section title="Email — SMTP (Hostinger / cPanel / Gmail)">
+            <p className="text-xs" style={{color:"var(--muted)"}}>
+              If configured, SMTP is used <b>first</b>. Resend is the fallback. Leave password empty to keep the current value.
+            </p>
+            <Info label="SMTP status" value={s.has_smtp ? "configured" : "not set"} status={s.has_smtp ? "ok" : "off"} />
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="SMTP host" value={form.smtp_host||""} onChange={v=>setForm({...form,smtp_host:v})} testid="setting-smtp-host" placeholder="mail.yourdomain.com" />
+              <Field label="Port" value={form.smtp_port||""} onChange={v=>setForm({...form,smtp_port:v})} testid="setting-smtp-port" placeholder="587" />
+            </div>
+            <Field label="SMTP username (usually your full email)" value={form.smtp_user||""} onChange={v=>setForm({...form,smtp_user:v})} testid="setting-smtp-user" placeholder="noreply@yourdomain.com" />
+            <Field label="SMTP password (set / replace)" value={form.smtp_password||""} onChange={v=>setForm({...form,smtp_password:v})} testid="setting-smtp-pw" type="password" placeholder={s.smtp_password_masked || "leave empty to keep current"} />
+            <Field label="From address (optional — defaults to SMTP username)" value={form.smtp_from||""} onChange={v=>setForm({...form,smtp_from:v})} testid="setting-smtp-from" placeholder="Ajo Platform &lt;noreply@yourdomain.com&gt;" />
+            <label className="flex items-center gap-2.5 cursor-pointer py-1">
+              <input type="checkbox" checked={!!form.smtp_secure} onChange={e=>setForm({...form,smtp_secure:e.target.checked})} className="w-5 h-5" />
+              <span className="text-sm">Use SSL/TLS on connect (port 465). Uncheck for STARTTLS (port 587).</span>
+            </label>
           </Section>
 
           <Section title="WhatsApp — Twilio">

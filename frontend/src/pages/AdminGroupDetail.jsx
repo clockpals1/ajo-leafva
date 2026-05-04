@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -60,6 +60,9 @@ export default function AdminGroupDetail() {
   const [joinRegen, setJoinRegen] = useState(false);
   const [joinLinkLoading, setJoinLinkLoading] = useState(false);
   const [joinLinkErr, setJoinLinkErr] = useState("");
+  const [messages, setMessages] = useState([]);
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [removeReason, setRemoveReason] = useState("");
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -71,6 +74,9 @@ export default function AdminGroupDetail() {
     setData({ ...d, statuses: detail.statuses, cycles: detail.cycles });
     setUsers(u);
   };
+  const loadMessages = () =>
+    api.get(`/admin/groups/${id}/member-messages`).then(r => setMessages(r.data)).catch(()=>{});
+
   const loadJoinLink = async () => {
     setJoinLinkLoading(true); setJoinLinkErr("");
     try {
@@ -81,7 +87,7 @@ export default function AdminGroupDetail() {
     } finally { setJoinLinkLoading(false); }
   };
 
-  useEffect(() => { load(); loadJoinLink(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); loadJoinLink(); loadMessages(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (data?.group) setEditData({ ...data.group }); }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setField = (k, v) => setEditData(prev => ({ ...prev, [k]: v }));
@@ -113,9 +119,12 @@ export default function AdminGroupDetail() {
     } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
   };
 
-  const remove = async (uid) => {
-    if (!window.confirm("Remove this member?")) return;
-    await api.delete(`/admin/groups/${id}/members/${uid}`); load();
+  const remove = (uid, name) => { setRemoveTarget({ uid, name }); setRemoveReason(""); };
+
+  const confirmRemove = async () => {
+    const qs = removeReason ? `?reason=${encodeURIComponent(removeReason)}` : "";
+    await api.delete(`/admin/groups/${id}/members/${removeTarget.uid}${qs}`);
+    setRemoveTarget(null); load();
   };
 
   const confirmPayout = async (cycleNo) => {
@@ -158,13 +167,45 @@ export default function AdminGroupDetail() {
         </div>
 
         <div className="flex gap-1 border-b mb-6 overflow-x-auto scrollbar-none" style={{borderColor:"var(--border)"}}>
-          {["members","invitations","ledger","payouts","comments","settings"].map(k => (
+          {["members","messages","invitations","ledger","payouts","comments","settings"].map(k => (
             <button key={k} onClick={()=>setTab(k)}
               className={`px-4 py-2.5 text-sm border-b-2 -mb-px capitalize whitespace-nowrap shrink-0 ${tab===k?"font-semibold":"opacity-60"}`}
               style={{borderColor: tab===k?"var(--primary)":"transparent", color: tab===k?"var(--primary)":"var(--text)"}}
               data-testid={`gtab-${k}`}>{k}</button>
           ))}
         </div>
+
+        {tab === "messages" && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg">Member messages ({messages.length})</h3>
+              <button onClick={loadMessages} className="text-xs" style={{color:"var(--muted)"}}>Refresh</button>
+            </div>
+            {messages.length === 0 && (
+              <div className="card-tactile p-8 text-center text-sm" style={{color:"var(--muted)"}}>No messages yet.</div>
+            )}
+            {messages.map(m => (
+              <div key={m.id} className={`card-tactile p-4 ${!m.read ? "border-l-4" : ""}`}
+                style={!m.read ? {borderLeftColor:"var(--primary)"} : {}}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm">{m.subject}</div>
+                    <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>
+                      {m.from_user_name} · {m.from_user_email} · {fmtDate(m.created_at)}
+                    </div>
+                  </div>
+                  {!m.read && (
+                    <button onClick={async()=>{ await api.patch(`/admin/member-messages/${m.id}/read`); loadMessages(); }}
+                      className="text-xs shrink-0 px-2 py-1 rounded" style={{background:"var(--surface)",color:"var(--primary)"}}>
+                      Mark read
+                    </button>
+                  )}
+                </div>
+                <div className="mt-2 text-sm whitespace-pre-wrap leading-relaxed">{m.body}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {tab === "members" && (
           <div className="grid lg:grid-cols-3 gap-6">
@@ -193,7 +234,7 @@ export default function AdminGroupDetail() {
                       )}
                       <div className="flex items-center justify-between mt-2">
                         <div className="text-xs" style={{color:"var(--muted)"}}>Joined {fmtDate(m.joined_at)}</div>
-                        <button onClick={()=>remove(m.user_id)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
+                        <button onClick={()=>remove(m.user_id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
                           <Trash2 size={12}/> Remove
                         </button>
                       </div>
@@ -237,7 +278,7 @@ export default function AdminGroupDetail() {
                       </td>
                       <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
                       <td className="px-4 py-3 text-right">
-                        <button onClick={()=>remove(m.user_id)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
+                        <button onClick={()=>remove(m.user_id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
                           <Trash2 size={12}/> Remove
                         </button>
                       </td>
@@ -571,6 +612,33 @@ export default function AdminGroupDetail() {
           </div>
         )}
       </main>
+
+      {/* Remove member confirmation modal */}
+      {removeTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 sm:p-6">
+            <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4 sm:hidden" />
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-display text-lg">Remove member</h3>
+              <button onClick={()=>setRemoveTarget(null)} className="p-1 opacity-60 hover:opacity-100"><X size={18}/></button>
+            </div>
+            <p className="text-sm mb-4" style={{color:"var(--muted)"}}>
+              Remove <b>{removeTarget.name}</b> from this group? This cannot be undone.
+            </p>
+            <div className="mb-4">
+              <label className="form-label">Reason <span className="font-normal">(optional — logged in audit trail)</span></label>
+              <input value={removeReason} onChange={e=>setRemoveReason(e.target.value)}
+                className="form-input" placeholder="e.g. Missed payments, violated group terms" />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={()=>setRemoveTarget(null)} className="btn-secondary flex-1 text-sm">Cancel</button>
+              <button onClick={confirmRemove} className="flex-1 text-sm px-4 py-2.5 rounded-lg font-semibold text-white" style={{background:"#dc2626"}}>
+                Remove member
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

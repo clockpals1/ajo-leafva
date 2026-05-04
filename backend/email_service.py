@@ -1,7 +1,12 @@
-"""Email helper using Resend API. Reads settings from DB first, falls back to env."""
+"""Email helper — tries SMTP first (Hostinger/cPanel/any SMTP), falls back to Resend API.
+   Configuration is read from DB settings (set via admin panel), then env vars.
+   Never raises exceptions — always returns bool."""
 import os
 import asyncio
 import logging
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 logger = logging.getLogger("ajo.email")
 
@@ -23,26 +28,67 @@ def _wrap(title: str, body_html: str, cta_label: str = "", cta_link: str = "",
 </body></html>"""
 
 
+def _smtp_send_sync(host: str, port: int, user: str, password: str,
+                    from_addr: str, to: str, subject: str, html: str, secure: bool):
+    """Blocking SMTP send — run via asyncio.to_thread."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = to
+    msg.attach(MIMEText(html, "html"))
+    if secure:
+        with smtplib.SMTP_SSL(host, port, timeout=15) as srv:
+            srv.login(user, password)
+            srv.sendmail(from_addr, [to], msg.as_string())
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.ehlo()
+            srv.login(user, password)
+            srv.sendmail(from_addr, [to], msg.as_string())
+
+
 async def send_email(db, to: str, subject: str, title: str, body_html: str,
-                    cta_label: str = "", cta_link: str = "") -> bool:
-    """Send an email via Resend. Uses DB settings (fallback env). Never raises."""
+                     cta_label: str = "", cta_link: str = "") -> bool:
+    """Send email. SMTP first (if configured), then Resend fallback. Never raises."""
     if not to:
         return False
     settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
-    api_key = settings.get("resend_api_key") or os.environ.get("RESEND_API_KEY", "")
-    sender = settings.get("resend_sender") or os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
     brand = settings.get("brand_name") or "Ajo Platform"
+    html = _wrap(title, body_html, cta_label, cta_link, brand)
+
+    # ── 1. Try SMTP (Hostinger / cPanel / any SMTP) ──────────────────────────
+    smtp_host = settings.get("smtp_host") or os.environ.get("SMTP_HOST", "")
+    smtp_user = settings.get("smtp_user") or os.environ.get("SMTP_USER", "")
+    smtp_pw   = settings.get("smtp_password") or os.environ.get("SMTP_PASSWORD", "")
+    if smtp_host and smtp_user and smtp_pw:
+        smtp_port   = int(settings.get("smtp_port") or os.environ.get("SMTP_PORT", 587))
+        smtp_from   = settings.get("smtp_from") or smtp_user
+        smtp_secure = bool(settings.get("smtp_secure", False))
+        try:
+            await asyncio.to_thread(
+                _smtp_send_sync, smtp_host, smtp_port, smtp_user, smtp_pw,
+                smtp_from, to, subject, html, smtp_secure
+            )
+            logger.info(f"[smtp sent] {to} — {subject}")
+            return True
+        except Exception as e:
+            logger.warning(f"[smtp failed, trying Resend] {to} — {e}")
+
+    # ── 2. Fallback: Resend API ───────────────────────────────────────────────
+    api_key = settings.get("resend_api_key") or os.environ.get("RESEND_API_KEY", "")
+    sender  = settings.get("resend_sender") or os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
     if not api_key:
-        logger.info(f"[email skipped - no key] {to} — {subject}")
+        logger.info(f"[email skipped — no SMTP or Resend configured] {to} — {subject}")
         return False
     try:
         import resend
         resend.api_key = api_key
-        params = {"from": sender, "to": [to], "subject": subject,
-                  "html": _wrap(title, body_html, cta_label, cta_link, brand)}
+        params = {"from": sender, "to": [to], "subject": subject, "html": html}
         result = await asyncio.to_thread(resend.Emails.send, params)
-        logger.info(f"[email sent] {to} — {subject} — id={result.get('id') if isinstance(result, dict) else result}")
+        logger.info(f"[resend sent] {to} — {subject} — id={result.get('id') if isinstance(result, dict) else result}")
         return True
     except Exception as e:
-        logger.warning(f"[email failed] {to} — {subject} — {e}")
+        logger.warning(f"[resend failed] {to} — {subject} — {e}")
         return False
