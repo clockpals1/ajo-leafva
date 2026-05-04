@@ -23,13 +23,29 @@ export default function AdminSettings() {
   };
   useEffect(() => { load(); }, []);
 
+  const [testEmailMsg, setTestEmailMsg] = useState("");
+  const [testEmailBusy, setTestEmailBusy] = useState(false);
+
   const save = async (e) => {
     e.preventDefault(); setErr(""); setMsg("");
     try {
-      const payload = Object.fromEntries(Object.entries(form).filter(([,v]) => v && v !== ""));
+      const payload = Object.fromEntries(
+        Object.entries(form).filter(([, v]) => typeof v === "boolean" || (v !== null && v !== undefined && v !== ""))
+      );
+      if (payload.smtp_port) payload.smtp_port = parseInt(payload.smtp_port, 10) || 587;
       await api.put("/admin/settings", payload);
       setMsg("Settings saved."); load();
     } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const sendTestEmail = async () => {
+    setTestEmailBusy(true); setTestEmailMsg("");
+    try {
+      const r = await api.post("/admin/test-email");
+      setTestEmailMsg(`✓ Test email sent to ${r.data.sent_to}. Check your inbox.`);
+    } catch (e) {
+      setTestEmailMsg(`✗ ${formatErr(e?.response?.data?.detail) || "Failed — check your SMTP settings and try again."}`);
+    } finally { setTestEmailBusy(false); }
   };
 
   if (!s) return <div className="min-h-screen bg-app"><TopNav /><div className="p-10">Loading…</div></div>;
@@ -74,6 +90,18 @@ export default function AdminSettings() {
               <input type="checkbox" checked={!!form.smtp_secure} onChange={e=>setForm({...form,smtp_secure:e.target.checked})} className="w-5 h-5" />
               <span className="text-sm">Use SSL/TLS on connect (port 465). Uncheck for STARTTLS (port 587).</span>
             </label>
+            <div className="flex items-center gap-3 pt-1">
+              <button type="button" disabled={testEmailBusy} onClick={sendTestEmail}
+                className="btn-secondary text-sm inline-flex items-center gap-1.5">
+                {testEmailBusy ? "Sending…" : "Send test email to me"}
+              </button>
+              {testEmailMsg && (
+                <span className="text-sm" style={{color: testEmailMsg.startsWith("✓") ? "var(--primary)" : "#b91c1c"}}>
+                  {testEmailMsg}
+                </span>
+              )}
+            </div>
+            <p className="text-xs" style={{color:"var(--muted)"}}>Saves settings first, then sends a test email to your admin account. Use this to confirm SMTP is working before broadcasting.</p>
           </Section>
 
           <Section title="WhatsApp — Twilio">

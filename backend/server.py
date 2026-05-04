@@ -1392,6 +1392,24 @@ class BroadcastIn(BaseModel):
     body: str
     group_id: Optional[str] = None  # None = all groups
 
+@api.post("/admin/test-email")
+async def test_email_endpoint(admin=Depends(require_admin)):
+    """Send a test email to the calling admin so they can verify SMTP / Resend config."""
+    ok = await send_email(
+        db,
+        admin["email"],
+        "Ajo Platform — test email",
+        "Email delivery test",
+        "If you received this, your email configuration is working correctly. "
+        "Broadcasts and notifications will be delivered by the same channel.",
+        cta_label="Go to Admin",
+        cta_link=os.environ.get("FRONTEND_URL", ""),
+    )
+    if not ok:
+        raise HTTPException(500,
+            "Email delivery failed. Check SMTP host/port/user/password or your Resend API key in Settings.")
+    return {"ok": True, "sent_to": admin["email"]}
+
 @api.post("/admin/broadcast")
 async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
     """Admin broadcasts in-app notification + email to all members of a group (or all groups)."""
