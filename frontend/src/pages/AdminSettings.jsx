@@ -90,9 +90,15 @@ export default function AdminSettings() {
 
           <Section title="Email — Resend">
             <Info label="API key (current)" value={s.resend_api_key_masked || "not set"} status={s.has_resend ? "ok" : "off"} />
-            <Field label="API key (set / replace)" value={form.resend_api_key} onChange={v=>setForm({...form, resend_api_key:v})} testid="setting-resend-key" placeholder="re_..." />
-            <Field label="Sender email" value={form.resend_sender||""} onChange={v=>setForm({...form, resend_sender:v})} testid="setting-resend-sender" placeholder="noreply@yourdomain.com" />
-            <p className="text-xs" style={{color:"var(--muted)"}}>Domain must be DNS-verified on Resend to deliver reliably.</p>
+            {!s.has_resend && (
+              <p className="text-xs text-red-700 font-medium">⚠ No Resend API key saved yet — enter it below and save.</p>
+            )}
+            <Field label="API key (set / replace)" value={form.resend_api_key} onChange={v=>setForm({...form, resend_api_key:v})} testid="setting-resend-key" placeholder="re_... (must re-enter to update)" />
+            <Field label="Sender email (REQUIRED — must match your verified Resend domain)" value={form.resend_sender||""} onChange={v=>setForm({...form, resend_sender:v})} testid="setting-resend-sender" placeholder="noreply@ajo.leafva.com" />
+            {s.has_resend && !s.resend_sender && (
+              <p className="text-xs text-red-700 font-medium">⚠ Sender email is not set — all emails will fail. Enter an address on your verified domain above.</p>
+            )}
+            <p className="text-xs" style={{color:"var(--muted)"}}>Domain must be DNS-verified on Resend. The sender must be an address on that verified domain (e.g. noreply@ajo.leafva.com).</p>
           </Section>
 
           <Section title="Email — SMTP (Hostinger / cPanel / Gmail)">
