@@ -4,7 +4,7 @@ import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import {
   Plus, Users, UserCheck, Clock, AlertTriangle, TrendingUp,
-  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X, Trash2,
+  Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X, Trash2, Pencil, KeyRound,
 } from "lucide-react";
 
 const ACTION_COLORS = {
@@ -50,6 +50,12 @@ export default function AdminDashboard() {
   const [addUserForm, setAddUserForm] = useState({ name: "", email: "", password: "", role: "member" });
   const [addUserErr, setAddUserErr] = useState("");
   const [roleUpdating, setRoleUpdating] = useState(null);
+  const [editUserTarget, setEditUserTarget] = useState(null);
+  const [editUserForm, setEditUserForm] = useState({ name: "", email: "" });
+  const [editUserErr, setEditUserErr] = useState("");
+  const [resetPwTarget, setResetPwTarget] = useState(null);
+  const [resetPwValue, setResetPwValue] = useState("");
+  const [resetPwErr, setResetPwErr] = useState("");
 
   const load = async () => {
     const [s, g, p, u, a] = await Promise.all([
@@ -104,6 +110,34 @@ export default function AdminDashboard() {
       await api.delete(`/admin/groups/${g.id}`);
       load();
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const openEditUser = (u) => {
+    setEditUserTarget(u);
+    setEditUserForm({ name: u.name, email: u.email });
+    setEditUserErr("");
+  };
+
+  const submitEditUser = async (e) => {
+    e.preventDefault(); setEditUserErr("");
+    try {
+      await api.patch(`/admin/users/${editUserTarget.id}`, editUserForm);
+      setEditUserTarget(null); load();
+    } catch (e) { setEditUserErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const submitResetPw = async (e) => {
+    e.preventDefault(); setResetPwErr("");
+    try {
+      await api.post(`/admin/users/${resetPwTarget.id}/set-password`, { password: resetPwValue });
+      setResetPwTarget(null); setResetPwValue("");
+    } catch (e) { setResetPwErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const deleteUser = async (u) => {
+    if (!window.confirm(`Delete ${u.name} (${u.email})? This removes the user and all their group memberships. This cannot be undone.`)) return;
+    try { await api.delete(`/admin/users/${u.id}`); load(); }
+    catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
   const changeRole = async (userId, newRole) => {
@@ -508,6 +542,11 @@ export default function AdminDashboard() {
                       {hasBank
                         ? <div className="text-xs" style={{color:"var(--muted)"}}>{u.bank_name} · {u.bank_account_number}</div>
                         : <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2",color:"#991b1b"}}>Bank not set</span>}
+                      <div className="flex items-center gap-2 mt-2 pt-2 border-t" style={{borderColor:"var(--border)"}}>
+                        <button onClick={()=>openEditUser(u)} className="text-xs inline-flex items-center gap-1" style={{color:"var(--primary)"}}><Pencil size={11}/> Edit</button>
+                        <button onClick={()=>{ setResetPwTarget(u); setResetPwValue(""); setResetPwErr(""); }} className="text-xs inline-flex items-center gap-1" style={{color:"#854d0e"}}><KeyRound size={11}/> Set password</button>
+                        <button onClick={()=>deleteUser(u)} className="text-xs inline-flex items-center gap-1 ml-auto text-red-700"><Trash2 size={11}/> Delete</button>
+                      </div>
                     </div>
                   );
                 })}
@@ -521,6 +560,7 @@ export default function AdminDashboard() {
                     <th className="px-4 py-3 label-eyebrow">Role</th>
                     <th className="px-4 py-3 label-eyebrow">Bank details</th>
                     <th className="px-4 py-3 label-eyebrow">Joined</th>
+                    <th className="px-4 py-3 label-eyebrow"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -552,11 +592,18 @@ export default function AdminDashboard() {
                           ) : <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2", color:"#991b1b"}}>Not set</span>}
                         </td>
                         <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{fmtDate(u.created_at)}</td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button onClick={()=>openEditUser(u)} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border" style={{color:"var(--primary)",borderColor:"var(--border)"}} title="Edit user"><Pencil size={11}/></button>
+                            <button onClick={()=>{ setResetPwTarget(u); setResetPwValue(""); setResetPwErr(""); }} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border" style={{color:"#854d0e",borderColor:"#fde68a"}} title="Set password"><KeyRound size={11}/></button>
+                            <button onClick={()=>deleteUser(u)} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border text-red-700" style={{borderColor:"#fecaca"}} title="Delete user"><Trash2 size={11}/></button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
                   {filteredUsers.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-10 text-center text-sm" style={{color:"var(--muted)"}}>No members found.</td></tr>
+                    <tr><td colSpan={6} className="px-4 py-10 text-center text-sm" style={{color:"var(--muted)"}}>No members found.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -600,6 +647,60 @@ export default function AdminDashboard() {
           </div>
         )}
       </main>
+
+      {/* ── Edit User Modal ── */}
+      {editUserTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={()=>setEditUserTarget(null)}>
+          <form onClick={e=>e.stopPropagation()} onSubmit={submitEditUser}
+            className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-xl">Edit user</h3>
+              <button type="button" onClick={()=>setEditUserTarget(null)} className="p-1 opacity-60 hover:opacity-100"><X size={18}/></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Full name</label>
+                <input required value={editUserForm.name} onChange={e=>setEditUserForm({...editUserForm,name:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Email address</label>
+                <input required type="email" value={editUserForm.email} onChange={e=>setEditUserForm({...editUserForm,email:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm" />
+              </div>
+            </div>
+            {editUserErr && <div className="text-red-700 text-sm mt-3">{editUserErr}</div>}
+            <div className="flex gap-2 mt-5 justify-end">
+              <button type="button" onClick={()=>setEditUserTarget(null)} className="btn-secondary text-sm">Cancel</button>
+              <button type="submit" className="btn-primary text-sm">Save changes</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ── Reset Password Modal ── */}
+      {resetPwTarget && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={()=>setResetPwTarget(null)}>
+          <form onClick={e=>e.stopPropagation()} onSubmit={submitResetPw}
+            className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-display text-xl">Set password</h3>
+              <button type="button" onClick={()=>setResetPwTarget(null)} className="p-1 opacity-60 hover:opacity-100"><X size={18}/></button>
+            </div>
+            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Setting a new password for <b>{resetPwTarget.name}</b>. They will be able to login with this password.</p>
+            <div>
+              <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>New password (min. 6 characters)</label>
+              <input required type="password" minLength={6} value={resetPwValue} onChange={e=>setResetPwValue(e.target.value)}
+                className="w-full border rounded px-3 py-2 text-sm" placeholder="New password" />
+            </div>
+            {resetPwErr && <div className="text-red-700 text-sm mt-3">{resetPwErr}</div>}
+            <div className="flex gap-2 mt-5 justify-end">
+              <button type="button" onClick={()=>setResetPwTarget(null)} className="btn-secondary text-sm">Cancel</button>
+              <button type="submit" className="btn-primary text-sm">Set password</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* ── Add User Modal ── */}
       {addUserOpen && (

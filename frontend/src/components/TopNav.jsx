@@ -1,12 +1,23 @@
-import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
+import api from "../api";
 import { LogOut, Bell, LayoutDashboard, ShieldCheck, Menu, X, User } from "lucide-react";
 
 export default function TopNav() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    api.get("/notifications/my").then(r => {
+      setUnread(r.data.filter(n => !n.read).length);
+    }).catch(() => {});
+  }, [user, location.pathname]);
+
   if (!user) return null;
   const isAdmin = user.role === "admin" || user.role === "super_admin";
   const dashLink = isAdmin ? "/admin" : "/dashboard";
@@ -36,8 +47,13 @@ export default function TopNav() {
               <LayoutDashboard size={15} /> Dashboard
             </Link>
           )}
-          <Link to="/notifications" className="p-2 rounded hover:bg-[var(--surface)]" data-testid="nav-notifications" title="Notifications">
+          <Link to="/notifications" className="relative p-2 rounded hover:bg-[var(--surface)]" data-testid="nav-notifications" title="Notifications">
             <Bell size={16} />
+            {unread > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[9px] min-w-[16px] h-4 rounded-full flex items-center justify-center font-bold px-0.5">
+                {unread > 9 ? "9+" : unread}
+              </span>
+            )}
           </Link>
           <Link to="/profile" className="text-sm px-3 py-2 rounded hover:bg-[var(--surface)] max-w-[140px] truncate" data-testid="nav-profile">
             {user.name}
@@ -53,8 +69,13 @@ export default function TopNav() {
 
         {/* Mobile: bell + hamburger */}
         <div className="flex sm:hidden items-center gap-1">
-          <Link to="/notifications" onClick={close} className="p-2.5 rounded-lg hover:bg-[var(--surface)]" aria-label="Notifications">
+          <Link to="/notifications" onClick={close} className="relative p-2.5 rounded-lg hover:bg-[var(--surface)]" aria-label="Notifications">
             <Bell size={18} />
+            {unread > 0 && (
+              <span className="absolute top-0.5 right-0.5 bg-red-500 text-white text-[9px] min-w-[16px] h-4 rounded-full flex items-center justify-center font-bold px-0.5">
+                {unread > 9 ? "9+" : unread}
+              </span>
+            )}
           </Link>
           <button
             onClick={() => setOpen(o => !o)}

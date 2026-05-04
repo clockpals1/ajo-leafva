@@ -770,6 +770,57 @@ async def admin_create_user(data: AdminCreateUser, admin=Depends(require_admin))
     user.pop("_id", None)
     return user
 
+class UpdateUserIn(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+class SetPasswordIn(BaseModel):
+    password: str
+
+@api.patch("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, data: UpdateUserIn, admin=Depends(require_admin)):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(404, "User not found")
+    update: dict = {}
+    if data.name and data.name.strip():
+        update["name"] = data.name.strip()
+    if data.email and data.email.strip():
+        email = data.email.lower().strip()
+        conflict = await db.users.find_one({"email": email, "id": {"$ne": user_id}})
+        if conflict:
+            raise HTTPException(400, "Email already in use by another account")
+        update["email"] = email
+    if not update:
+        return {"ok": True, "changed": 0}
+    await db.users.update_one({"id": user_id}, {"$set": update})
+    await log_audit(admin["id"], "user_updated", target=user_id, meta={"changes": list(update.keys())})
+    return {"ok": True, "changed": len(update)}
+
+@api.post("/admin/users/{user_id}/set-password")
+async def admin_set_password(user_id: str, data: SetPasswordIn, admin=Depends(require_admin)):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(404, "User not found")
+    if len(data.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": hash_pw(data.password)}})
+    await log_audit(admin["id"], "password_reset_by_admin", target=user_id)
+    return {"ok": True}
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, admin=Depends(require_admin)):
+    u = await db.users.find_one({"id": user_id})
+    if not u:
+        raise HTTPException(404, "User not found")
+    if user_id == admin["id"]:
+        raise HTTPException(400, "You cannot delete your own account")
+    await db.users.delete_one({"id": user_id})
+    await db.group_members.delete_many({"user_id": user_id})
+    await db.notifications.delete_many({"user_id": user_id})
+    await log_audit(admin["id"], "user_deleted", target=user_id, meta={"email": u.get("email", "")})
+    return {"ok": True}
+
 @api.patch("/admin/users/{user_id}/role")
 async def update_user_role(user_id: str, data: UserRoleUpdate, admin=Depends(require_admin)):
     user = await db.users.find_one({"id": user_id})
@@ -1343,15 +1394,44 @@ class BroadcastIn(BaseModel):
 
 @api.post("/admin/broadcast")
 async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
-    """Admin broadcasts a notification to all members of one group (or all groups)."""
+    """Admin broadcasts in-app notification + email to all members of a group (or all groups)."""
+    settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    fe = _get_fe_url(settings)
+
+    async def _email_members(group_id: str, group_name: str, sent: set):
+        mems = await db.group_members.find(
+            {"group_id": group_id, "status": {"$ne": "removed"}}).to_list(1000)
+        for m in mems:
+            if m["user_id"] in sent:
+                continue
+            u = await db.users.find_one({"id": m["user_id"]}, {"_id": 0})
+            if u and u.get("email"):
+                await send_email(
+                    db, u["email"],
+                    f"{data.title}",
+                    data.title, data.body,
+                    cta_label=f"View {group_name}",
+                    cta_link=f"{fe}/groups/{group_id}"
+                )
+                sent.add(m["user_id"])
+        return mems
+
     if data.group_id:
+        group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+        gname = group["name"] if group else "group"
         await notify_group(data.group_id, data.title, data.body, link=f"/groups/{data.group_id}")
-        return {"ok": True, "scope": "group"}
-    # all groups: iterate
+        mems = await _email_members(data.group_id, gname, set())
+        await log_audit(admin["id"], "admin_broadcast",
+                        meta={"scope": data.group_id, "members": len(mems)})
+        return {"ok": True, "scope": "group", "members": len(mems)}
+
     groups = await db.groups.find({"status": "active"}).to_list(1000)
+    sent: set = set()
     for g in groups:
         await notify_group(g["id"], data.title, data.body, link=f"/groups/{g['id']}")
-    await log_audit(admin["id"], "admin_broadcast", meta={"scope": "all" if not data.group_id else data.group_id})
+        await _email_members(g["id"], g["name"], sent)
+    await log_audit(admin["id"], "admin_broadcast",
+                    meta={"scope": "all", "groups": len(groups), "members": len(sent)})
     return {"ok": True, "scope": "all", "groups": len(groups)}
 
 # ---------------- INCLUDE ROUTER ----------------
