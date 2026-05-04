@@ -1392,6 +1392,34 @@ class BroadcastIn(BaseModel):
     body: str
     group_id: Optional[str] = None  # None = all groups
 
+@api.get("/admin/email-config")
+async def email_config_check(admin=Depends(require_admin)):
+    """Return what email channel and sender are currently active — no secrets exposed."""
+    s = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    smtp_host = s.get("smtp_host") or os.environ.get("SMTP_HOST", "")
+    smtp_user = s.get("smtp_user") or os.environ.get("SMTP_USER", "")
+    smtp_pw   = s.get("smtp_password") or os.environ.get("SMTP_PASSWORD", "")
+    has_smtp  = bool(smtp_host and smtp_user and smtp_pw)
+    resend_key    = s.get("resend_api_key") or os.environ.get("RESEND_API_KEY", "")
+    resend_sender = s.get("resend_sender") or os.environ.get("SENDER_EMAIL", "")
+    has_resend    = bool(resend_key and resend_sender)
+    return {
+        "smtp": {
+            "configured": has_smtp,
+            "host": smtp_host,
+            "port": int(s.get("smtp_port") or os.environ.get("SMTP_PORT", 587)),
+            "user": smtp_user,
+            "from": s.get("smtp_from") or smtp_user,
+            "secure": bool(s.get("smtp_secure", False)),
+        },
+        "resend": {
+            "configured": has_resend,
+            "key_set": bool(resend_key),
+            "sender": resend_sender or "(NOT SET — emails will fail)",
+        },
+        "active_channel": "smtp" if has_smtp else ("resend" if has_resend else "none"),
+    }
+
 @api.post("/admin/test-email")
 async def test_email_endpoint(admin=Depends(require_admin)):
     """Send a test email to the calling admin so they can verify SMTP / Resend config."""

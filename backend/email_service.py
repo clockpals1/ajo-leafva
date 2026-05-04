@@ -93,10 +93,15 @@ async def _send_email_inner(db, to: str, subject: str, title: str, body_html: st
 
     # ── 2. Fallback: Resend API (uses native async send_async) ────────────────
     api_key = settings.get("resend_api_key") or os.environ.get("RESEND_API_KEY", "")
-    sender  = settings.get("resend_sender") or os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+    sender  = settings.get("resend_sender") or os.environ.get("SENDER_EMAIL", "")
     if not api_key:
-        msg = "No email configured: add SMTP or Resend credentials in Settings."
+        msg = "No email configured: add SMTP credentials or a Resend API key in Admin → Settings."
         logger.info(f"[email skipped — no SMTP or Resend configured] {to} — {subject}")
+        return False, last_error or msg
+    if not sender:
+        msg = ("Resend API key is set but 'Sender email' is empty. "
+               "Set it to an address on your verified domain, e.g. noreply@yourdomain.com")
+        logger.warning(f"[resend skipped — no sender] {to} — {subject}")
         return False, last_error or msg
     try:
         import resend

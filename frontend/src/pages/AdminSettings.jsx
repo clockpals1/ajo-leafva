@@ -7,10 +7,12 @@ export default function AdminSettings() {
   const [form, setForm] = useState({});
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  const [emailCfg, setEmailCfg] = useState(null);
 
   const load = async () => {
     const { data } = await api.get("/admin/settings");
     setS(data);
+    api.get("/admin/email-config").then(r => setEmailCfg(r.data)).catch(() => {});
     setForm({
       brand_name: data.brand_name, support_email: data.support_email,
       resend_sender: data.resend_sender, resend_api_key: "",
@@ -56,6 +58,25 @@ export default function AdminSettings() {
       <main className="max-w-3xl mx-auto px-6 py-10">
         <div className="label-eyebrow mb-2">Admin · Platform Settings</div>
         <h1 className="font-display text-3xl mb-2">System configuration</h1>
+
+        {emailCfg && (
+          <div className="mb-6 card-tactile p-4 text-sm" style={{borderLeft:"3px solid var(--primary)", background:emailCfg.active_channel==="none"?"#fef2f2":"var(--surface)"}}>
+            <div className="font-semibold mb-1">Active email channel: <span style={{color:emailCfg.active_channel==="none"?"#b91c1c":"var(--primary)"}}>{emailCfg.active_channel.toUpperCase()}</span></div>
+            {emailCfg.active_channel==="none" && <div className="text-red-700">⚠ No email channel is active — broadcasts will not send emails.</div>}
+            {emailCfg.active_channel==="smtp" && <div>Sending from: <code>{emailCfg.smtp.from}</code> via <code>{emailCfg.smtp.host}:{emailCfg.smtp.port}</code> ({emailCfg.smtp.secure?"SSL/TLS":"STARTTLS"})</div>}
+            {emailCfg.active_channel==="resend" && <div>Sending from: <code>{emailCfg.resend.sender}</code> via Resend API</div>}
+            {emailCfg.resend.key_set && !emailCfg.resend.sender && (
+              <div className="text-red-700 mt-1">⚠ Resend API key is set but <b>Sender email is empty</b>. Fill in the Sender email field below (must be on your verified domain).</div>
+            )}
+            {emailCfg.smtp.configured && emailCfg.smtp.secure && emailCfg.smtp.port===587 && (
+              <div className="text-amber-700 mt-1">⚠ SMTP is set to SSL/TLS mode but port is 587. Use 465 for SSL, or uncheck SSL for STARTTLS on 587.</div>
+            )}
+            {emailCfg.smtp.configured && !emailCfg.smtp.secure && emailCfg.smtp.port===465 && (
+              <div className="text-amber-700 mt-1">⚠ Port is 465 but SSL/TLS is unchecked. Tick the SSL checkbox for port 465.</div>
+            )}
+          </div>
+        )}
+
         <p className="text-sm mb-8" style={{color:"var(--muted)"}}>
           All platform config lives here — secrets are masked. Leave a secret field empty to keep the current value.
         </p>
