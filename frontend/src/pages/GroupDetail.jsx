@@ -5,7 +5,7 @@ import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
 import Comments from "../components/Comments";
 import { useAuth } from "../AuthContext";
-import { Upload, MessageCircle, X } from "lucide-react";
+import { Upload, MessageCircle, X, AlertTriangle, CalendarClock, Landmark, ArrowRight, Star } from "lucide-react";
 
 export default function GroupDetail() {
   const { id } = useParams();
@@ -50,6 +50,21 @@ export default function GroupDetail() {
   const statusByCycle = Object.fromEntries(myStatuses.map(s=>[s.cycle_no, s]));
   const isAdmin = user.role === "admin" || user.role === "super_admin";
 
+  // My slot(s) in this group
+  const mySlots = members.filter(m => m.user_id === user.id).sort((a,b)=>a.payout_position-b.payout_position);
+  // Cycles where I am the payout recipient
+  const myPayoutCycles = cycles.filter(c => c.payout_user_id === user.id);
+  // Expected payout per slot = contribution × active member count
+  const expectedPayout = group.contribution_amount * members.length;
+  // Next upcoming due cycle for me
+  const today = new Date();
+  const nextDue = cycles
+    .filter(c => { const s = statusByCycle[c.cycle_no]; return s && (s.status === "Due" || s.status === "Not_Due"); })
+    .filter(c => new Date(c.due_date) >= today)
+    .sort((a,b) => new Date(a.due_date) - new Date(b.due_date))[0] || null;
+  // Bank set?
+  const bankSet = !!(user.bank_name && user.bank_account_number && user.bank_account_name);
+
   const fileToDataUrl = (f) => new Promise((res, rej) => { const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); });
 
   const submitUpload = async (e) => {
@@ -84,6 +99,20 @@ export default function GroupDetail() {
       <main className="page-main">
         <button onClick={()=>nav(-1)} className="text-sm mb-4 inline-flex items-center gap-1" style={{color:"var(--muted)"}} data-testid="back-btn">← Back</button>
 
+        {/* Bank details warning */}
+        {!isAdmin && !bankSet && (
+          <div className="mb-4 sm:mb-6 px-4 py-3 rounded-xl flex items-start gap-3" style={{background:"#fef3c7",border:"1px solid #fcd34d"}}>
+            <AlertTriangle size={18} className="shrink-0 mt-0.5" style={{color:"#92400e"}}/>
+            <div className="flex-1 min-w-0">
+              <div className="font-semibold text-sm" style={{color:"#92400e"}}>Bank details missing</div>
+              <div className="text-xs mt-0.5" style={{color:"#78350f"}}>Your bank account isn't set. The admin can't process your payout without it.</div>
+            </div>
+            <a href="/profile" className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1" style={{background:"#92400e",color:"#fff"}}>
+              Add now <ArrowRight size={11}/>
+            </a>
+          </div>
+        )}
+
         {/* Header — stacks vertically on mobile */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 sm:mb-8">
           <div className="min-w-0">
@@ -99,6 +128,59 @@ export default function GroupDetail() {
             <div className="text-xs sm:mt-2" style={{color:"var(--muted)"}}>Due day {group.due_day} · {group.due_time}</div>
           </div>
         </div>
+
+        {/* ── My Ajo at a glance (members only) ── */}
+        {!isAdmin && mySlots.length > 0 && (
+          <div className="card-tactile p-4 sm:p-5 mb-4 sm:mb-6">
+            <div className="label-eyebrow mb-3 flex items-center gap-1.5"><Star size={12}/> My Ajo at a glance</div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>My slot{mySlots.length>1?"s":""}</div>
+                <div className="font-display text-lg mt-0.5">{mySlots.map(s=>`#${s.payout_position}`).join(", ")}</div>
+              </div>
+              <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>My payout month{myPayoutCycles.length>1?"s":""}</div>
+                <div className="font-display text-base mt-0.5">
+                  {myPayoutCycles.length > 0
+                    ? myPayoutCycles.map(c => fmtDate(c.due_date)).join(", ")
+                    : <span style={{color:"var(--muted)"}}>Not assigned yet</span>}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>Expected payout{mySlots.length>1?" (per slot)":""}</div>
+                <div className="font-display text-lg mt-0.5" style={{color:"var(--primary)"}}>{fmtMoney(expectedPayout)}</div>
+                <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{members.length} members × {fmtMoney(group.contribution_amount)}</div>
+              </div>
+              <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>Bank for payout</div>
+                {bankSet ? (
+                  <div className="text-sm mt-0.5 font-medium flex items-center gap-1" style={{color:"#16a34a"}}>
+                    <Landmark size={13}/> {user.bank_name}
+                    <a href="/profile" className="text-xs ml-1 opacity-60 hover:opacity-100" style={{color:"var(--muted)"}}>(edit)</a>
+                  </div>
+                ) : (
+                  <a href="/profile" className="mt-0.5 text-xs font-semibold inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg" style={{background:"#92400e15",color:"#92400e"}}>
+                    <ArrowRight size={11}/> Add bank details
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Next contribution due ── */}
+        {!isAdmin && nextDue && (
+          <div className="mb-4 sm:mb-6 px-4 py-3 rounded-xl flex items-center gap-3" style={{background:"var(--surface)",border:"1px solid var(--border)"}}>
+            <CalendarClock size={18} className="shrink-0" style={{color:"var(--primary)"}}/>
+            <div className="flex-1 min-w-0">
+              <span className="text-sm font-semibold">Next contribution due: </span>
+              <span className="text-sm">Cycle #{nextDue.cycle_no} · {fmtDate(nextDue.due_date)} · {fmtMoney(nextDue.expected_amount)}</span>
+            </div>
+            <button onClick={()=>openUpload(nextDue)} className="shrink-0 btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1">
+              <Upload size={11}/> Pay now
+            </button>
+          </div>
+        )}
 
         {group.rules_text && (
           <div className="card-tactile p-4 sm:p-5 mb-4 sm:mb-6" data-testid="rules-card">
@@ -135,11 +217,15 @@ export default function GroupDetail() {
               {cycles.map(c => {
                 const s = statusByCycle[c.cycle_no];
                 const canUpload = !isAdmin && s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due");
+                const isMyPayout = !isAdmin && c.payout_user_id === user.id;
                 return (
-                  <div key={c.id} className="p-4">
+                  <div key={c.id} className="p-4" style={isMyPayout ? {background:"var(--primary)08",borderLeft:"3px solid var(--primary)"} : {}}>
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
-                        <div className="font-semibold text-sm">Cycle #{c.cycle_no}</div>
+                        <div className="font-semibold text-sm flex items-center gap-1.5">
+                          Cycle #{c.cycle_no}
+                          {isMyPayout && <span className="text-xs px-1.5 py-0.5 rounded font-semibold" style={{background:"var(--primary)",color:"#fff"}}>My payout</span>}
+                        </div>
                         <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{fmtDate(c.due_date)} · {fmtMoney(c.expected_amount)}</div>
                         {c.payout_user_name && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>Payout: {c.payout_user_name}</div>}
                       </div>
@@ -174,9 +260,13 @@ export default function GroupDetail() {
                 {cycles.map(c => {
                   const s = statusByCycle[c.cycle_no];
                   const canUpload = !isAdmin && s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due");
+                  const isMyPayout = !isAdmin && c.payout_user_id === user.id;
                   return (
-                    <tr key={c.id} className="border-t" style={{borderColor:"var(--border)"}}>
-                      <td className="px-4 py-3 font-display">{c.cycle_no}</td>
+                    <tr key={c.id} className="border-t" style={{borderColor:"var(--border)", background: isMyPayout ? "var(--primary)08" : ""}}>
+                      <td className="px-4 py-3 font-display">
+                        {c.cycle_no}
+                        {isMyPayout && <span className="ml-2 text-xs px-1.5 py-0.5 rounded font-semibold" style={{background:"var(--primary)",color:"#fff"}}>Mine</span>}
+                      </td>
                       <td className="px-4 py-3">{fmtDate(c.due_date)}</td>
                       <td className="px-4 py-3 text-right font-display">{fmtMoney(c.expected_amount)}</td>
                       <td className="px-4 py-3">{c.payout_user_name || <span style={{color:"var(--muted)"}}>—</span>}</td>
@@ -201,40 +291,56 @@ export default function GroupDetail() {
         </section>
 
         <section>
-          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">Group members ({members.length})</h2>
+          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">Group members ({members.length}/{group.member_limit})</h2>
           <div className="card-tactile overflow-hidden">
             {/* Mobile member cards */}
             <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
-              {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => (
-                <div key={m.id} className="px-4 py-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold truncate">{m.display_name || m.user_name}</div>
-                    {isAdmin && <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>}
-                    <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>Joined {fmtDate(m.joined_at)}</div>
+              {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
+                const payoutCycle = cycles.find(c => c.payout_user_id === m.user_id && c.cycle_no === m.payout_position);
+                const isMe = m.user_id === user.id;
+                return (
+                  <div key={m.id} className="px-4 py-3 flex items-center justify-between gap-3" style={isMe ? {background:"var(--primary)06"} : {}}>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold truncate flex items-center gap-1.5">
+                        {m.display_name || m.user_name}
+                        {isMe && <span className="text-xs px-1.5 py-0.5 rounded" style={{background:"var(--primary)15",color:"var(--primary)"}}>You</span>}
+                      </div>
+                      {isAdmin && <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>}
+                      {payoutCycle && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>Payout: {fmtDate(payoutCycle.due_date)}</div>}
+                    </div>
+                    <span className="badge s-Payout_Eligible shrink-0">#{m.payout_position}</span>
                   </div>
-                  <span className="badge s-Payout_Eligible shrink-0">#{m.payout_position}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {/* Desktop table */}
             <table className="desktop-table w-full text-sm">
               <thead className="bg-white/50">
                 <tr className="text-left">
-                  <th className="px-4 py-3 label-eyebrow">Position</th>
+                  <th className="px-4 py-3 label-eyebrow">Slot</th>
                   <th className="px-4 py-3 label-eyebrow">Member</th>
                   {isAdmin && <th className="px-4 py-3 label-eyebrow">Email</th>}
+                  <th className="px-4 py-3 label-eyebrow">Payout month</th>
                   <th className="px-4 py-3 label-eyebrow">Joined</th>
                 </tr>
               </thead>
               <tbody>
-                {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => (
-                  <tr key={m.id} className="border-t" style={{borderColor:"var(--border)"}}>
-                    <td className="px-4 py-3 font-display">#{m.payout_position}</td>
-                    <td className="px-4 py-3">{m.display_name || m.user_name}</td>
-                    {isAdmin && <td className="px-4 py-3" style={{color:"var(--muted)"}}>{m.user_email}</td>}
-                    <td className="px-4 py-3" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
-                  </tr>
-                ))}
+                {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
+                  const payoutCycle = cycles.find(c => c.payout_user_id === m.user_id && c.cycle_no === m.payout_position);
+                  const isMe = m.user_id === user.id;
+                  return (
+                    <tr key={m.id} className="border-t" style={{borderColor:"var(--border)", background: isMe ? "var(--primary)06" : ""}}>
+                      <td className="px-4 py-3 font-display">#{m.payout_position}</td>
+                      <td className="px-4 py-3 font-medium">
+                        {m.display_name || m.user_name}
+                        {isMe && <span className="ml-2 text-xs px-1.5 py-0.5 rounded" style={{background:"var(--primary)15",color:"var(--primary)"}}>You</span>}
+                      </td>
+                      {isAdmin && <td className="px-4 py-3" style={{color:"var(--muted)"}}>{m.user_email}</td>}
+                      <td className="px-4 py-3" style={{color:"var(--muted)"}}>{payoutCycle ? fmtDate(payoutCycle.due_date) : <span style={{color:"var(--muted)"}}>—</span>}</td>
+                      <td className="px-4 py-3" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
