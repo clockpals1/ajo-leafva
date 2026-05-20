@@ -32,6 +32,11 @@ JWT_ALG = "HS256"
 def now_utc():
     return datetime.now(timezone.utc)
 
+def _primary_fe_url() -> str:
+    """Return the first (primary) frontend URL — FRONTEND_URL may be comma-separated for CORS."""
+    raw = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+    return raw.split(',')[0].strip().rstrip('/')
+
 def hash_pw(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 
@@ -233,7 +238,7 @@ async def register(data: RegisterIn, response: Response):
                      "Your member account is ready. An admin will add you to a group shortly. "
                      "You can update your bank details and profile preferences from your dashboard.",
                      cta_label="Open dashboard",
-                     cta_link=f"{os.environ.get('FRONTEND_URL','')}/dashboard")
+                     cta_link=f"{_primary_fe_url()}/dashboard")
     user.pop("password_hash", None)
     return {"user": user, "token": token}
 
@@ -564,7 +569,7 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
                      f"You are payout #{position} in this {group['frequency']} contribution. "
                      f"Contribution amount: {group['contribution_amount']}.{wa_html}",
                      cta_label="View group",
-                     cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{group_id}")
+                     cta_link=f"{_primary_fe_url()}/groups/{group_id}")
     return gm
 
 class UpdateMemberIn(BaseModel):
@@ -745,7 +750,7 @@ async def decide_payment(payment_id: str, data: DecisionIn, admin=Depends(requir
         f"Your payment of {p['amount']} for cycle {p['cycle_no']} was <b>{new_status}</b>." +
         (f"<br><br>Admin note: {data.note}" if data.note else ""),
         cta_label="View group",
-        cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{p['group_id']}"
+        cta_link=f"{_primary_fe_url()}/groups/{p['group_id']}"
     )
     return {"ok": True, "status": new_status}
 
@@ -781,7 +786,7 @@ async def confirm_payout(group_id: str, cycle_no: int, admin=Depends(require_adm
                          "Your payout has been confirmed",
                          f"The payout for cycle {cycle_no} of <b>{group.get('name','your group')}</b> has been confirmed by the admin.",
                          cta_label="View group",
-                         cta_link=f"{os.environ.get('FRONTEND_URL','')}/groups/{group_id}")
+                         cta_link=f"{_primary_fe_url()}/groups/{group_id}")
     return {"ok": True}
 
 # ---------------- MEMBER VIEWS ----------------
@@ -1050,7 +1055,8 @@ async def update_settings(data: SettingsIn, admin=Depends(require_admin)):
     return {"ok": True, "changed": len(update)}
 
 def _get_fe_url(settings: dict, request: Request = None) -> str:
-    return settings.get("frontend_url") or os.environ.get("FRONTEND_URL", "")
+    raw = settings.get("frontend_url") or os.environ.get("FRONTEND_URL", "")
+    return raw.split(',')[0].strip().rstrip('/')
 
 # ---------------- INVITATIONS ----------------
 class InviteCreate(BaseModel):
@@ -1543,7 +1549,7 @@ async def test_email_endpoint(admin=Depends(require_admin)):
         "If you received this, your email configuration is working correctly. "
         "Broadcasts and notifications will be delivered by the same channel.",
         cta_label="Go to Admin",
-        cta_link=os.environ.get("FRONTEND_URL", ""),
+        cta_link=_primary_fe_url(),
     )
     if not ok:
         raise HTTPException(500, err or "Email delivery failed. Check SMTP / Resend settings.")
