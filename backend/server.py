@@ -1612,7 +1612,18 @@ logger = logging.getLogger("ajo")
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
-    await db.group_members.create_index([("group_id", 1), ("user_id", 1)], unique=True)
+    # Drop old (group_id, user_id) unique index that prevents multi-slot members
+    try:
+        await db.group_members.drop_index("group_id_1_user_id_1")
+    except Exception:
+        pass
+    # Uniqueness is per slot position, not per user — allows same user at multiple positions
+    await db.group_members.create_index([("group_id", 1), ("payout_position", 1)], unique=True)
+    # Also drop old member_cycle_status unique index if it blocks per-slot records
+    try:
+        await db.member_cycle_status.drop_index("group_id_1_cycle_no_1_user_id_1")
+    except Exception:
+        pass
     await db.member_cycle_status.create_index([("group_id", 1), ("cycle_no", 1), ("user_id", 1)], unique=True)
     await db.cycles.create_index([("group_id", 1), ("cycle_no", 1)], unique=True)
     # Seed admin
