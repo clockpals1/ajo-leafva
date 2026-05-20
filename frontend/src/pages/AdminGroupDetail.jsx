@@ -107,7 +107,10 @@ export default function AdminGroupDetail() {
 
   const { group, members, cycles, statuses } = data;
   const memberIds = new Set(members.map(m=>m.user_id));
-  const availableUsers = users.filter(u => u.role === "member" && !memberIds.has(u.id));
+  const multiSlots = !!group.allow_multiple_slots;
+  const availableUsers = multiSlots
+    ? users.filter(u => u.role === "member")
+    : users.filter(u => u.role === "member" && !memberIds.has(u.id));
   const userMap = Object.fromEntries(users.map(u => [u.id, u]));
 
   const copyText = (text) => navigator.clipboard?.writeText(text);
@@ -120,22 +123,22 @@ export default function AdminGroupDetail() {
     } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
   };
 
-  const startEditPos = (uid, current) =>
-    setEditingPos(prev => ({ ...prev, [uid]: String(current) }));
+  const startEditPos = (mid, current) =>
+    setEditingPos(prev => ({ ...prev, [mid]: String(current) }));
 
-  const cancelEditPos = (uid) =>
-    setEditingPos(prev => { const n = { ...prev }; delete n[uid]; return n; });
+  const cancelEditPos = (mid) =>
+    setEditingPos(prev => { const n = { ...prev }; delete n[mid]; return n; });
 
-  const savePosition = async (uid) => {
-    const val = parseInt(editingPos[uid], 10);
+  const savePosition = async (mid) => {
+    const val = parseInt(editingPos[mid], 10);
     if (!val || val < 1) return;
     try {
-      await api.patch(`/admin/groups/${id}/members/${uid}`, { payout_position: val });
-      cancelEditPos(uid); load();
+      await api.patch(`/admin/groups/${id}/members/${mid}`, { payout_position: val });
+      cancelEditPos(mid); load();
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
-  const remove = (uid, name) => { setRemoveTarget({ uid, name }); setRemoveReason(""); };
+  const remove = (mid, name) => { setRemoveTarget({ uid: mid, name }); setRemoveReason(""); };
 
   const confirmRemove = async () => {
     const qs = removeReason ? `?reason=${encodeURIComponent(removeReason)}` : "";
@@ -238,17 +241,17 @@ export default function AdminGroupDetail() {
                           <div className="font-semibold text-sm truncate">{m.user_name}</div>
                           <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>
                         </div>
-                        {editingPos[m.user_id] !== undefined ? (
+                        {editingPos[m.id] !== undefined ? (
                           <div className="flex items-center gap-1 shrink-0">
-                            <input type="number" min={1} value={editingPos[m.user_id]}
-                              onChange={e=>setEditingPos(p=>({...p,[m.user_id]:e.target.value}))}
-                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.user_id); if(e.key==="Escape") cancelEditPos(m.user_id); }}
+                            <input type="number" min={1} value={editingPos[m.id]}
+                              onChange={e=>setEditingPos(p=>({...p,[m.id]:e.target.value}))}
+                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.id); if(e.key==="Escape") cancelEditPos(m.id); }}
                               className="w-14 border rounded px-1.5 py-1 text-sm text-center font-display" autoFocus />
-                            <button onClick={()=>savePosition(m.user_id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
-                            <button onClick={()=>cancelEditPos(m.user_id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
+                            <button onClick={()=>savePosition(m.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
+                            <button onClick={()=>cancelEditPos(m.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
                           </div>
                         ) : (
-                          <button onClick={()=>startEditPos(m.user_id, m.payout_position)}
+                          <button onClick={()=>startEditPos(m.id, m.payout_position)}
                             className="badge s-Payout_Eligible shrink-0 inline-flex items-center gap-1 cursor-pointer group"
                             title="Click to edit payout position">
                             #{m.payout_position} <Pencil size={9} className="opacity-0 group-hover:opacity-60" />
@@ -265,7 +268,7 @@ export default function AdminGroupDetail() {
                       )}
                       <div className="flex items-center justify-between mt-2">
                         <div className="text-xs" style={{color:"var(--muted)"}}>Joined {fmtDate(m.joined_at)}</div>
-                        <button onClick={()=>remove(m.user_id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
+                        <button onClick={()=>remove(m.id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.id}`}>
                           <Trash2 size={12}/> Remove
                         </button>
                       </div>
@@ -291,17 +294,17 @@ export default function AdminGroupDetail() {
                     return (
                     <tr key={m.id} className="border-t" style={{borderColor:"var(--border)"}}>
                       <td className="px-4 py-3">
-                        {editingPos[m.user_id] !== undefined ? (
+                        {editingPos[m.id] !== undefined ? (
                           <div className="flex items-center gap-1">
-                            <input type="number" min={1} value={editingPos[m.user_id]}
-                              onChange={e=>setEditingPos(p=>({...p,[m.user_id]:e.target.value}))}
-                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.user_id); if(e.key==="Escape") cancelEditPos(m.user_id); }}
+                            <input type="number" min={1} value={editingPos[m.id]}
+                              onChange={e=>setEditingPos(p=>({...p,[m.id]:e.target.value}))}
+                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.id); if(e.key==="Escape") cancelEditPos(m.id); }}
                               className="w-16 border rounded px-2 py-1 text-sm text-center font-display" autoFocus />
-                            <button onClick={()=>savePosition(m.user_id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
-                            <button onClick={()=>cancelEditPos(m.user_id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
+                            <button onClick={()=>savePosition(m.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
+                            <button onClick={()=>cancelEditPos(m.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
                           </div>
                         ) : (
-                          <button onClick={()=>startEditPos(m.user_id, m.payout_position)}
+                          <button onClick={()=>startEditPos(m.id, m.payout_position)}
                             className="font-display inline-flex items-center gap-1 group opacity-90 hover:opacity-100"
                             title="Click to edit payout position">
                             #{m.payout_position} <Pencil size={10} className="opacity-0 group-hover:opacity-60" />
@@ -326,7 +329,7 @@ export default function AdminGroupDetail() {
                       </td>
                       <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
                       <td className="px-4 py-3 text-right">
-                        <button onClick={()=>remove(m.user_id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.user_id}`}>
+                        <button onClick={()=>remove(m.id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.id}`}>
                           <Trash2 size={12}/> Remove
                         </button>
                       </td>
@@ -339,15 +342,20 @@ export default function AdminGroupDetail() {
             </div>
             <form onSubmit={addMember} className="card-tactile p-4 sm:p-5" data-testid="add-member-form">
               <h3 className="font-display text-lg mb-3 flex items-center gap-2"><UserPlus size={16}/> Add member</h3>
+              {multiSlots && (
+                <div className="mb-3 px-3 py-2 rounded text-xs" style={{background:"#eff6ff",color:"#1d4ed8"}}>
+                  Multiple slots enabled — you can add the same person twice with different positions.
+                </div>
+              )}
               <div className="mb-3">
                 <label className="form-label">Member</label>
                 <select required value={addEmail} onChange={e=>setAddEmail(e.target.value)} className="form-input" data-testid="add-email">
                   <option value="">— Select existing user —</option>
-                  {availableUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}</option>)}
+                  {availableUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}{memberIds.has(u.id) ? " (already in group)" : ""}</option>)}
                 </select>
               </div>
               <div className="mb-3">
-                <label className="form-label">Payout position <span className="font-normal">(optional)</span></label>
+                <label className="form-label">Payout position{multiSlots ? " (required for extra slots)" : " (optional)"}</label>
                 <input type="number" value={addPos} onChange={e=>setAddPos(e.target.value)} className="form-input" data-testid="add-position"/>
               </div>
               {err && <div className="px-3 py-2 rounded-lg text-sm text-red-700 mb-3" style={{background:"#fef2f2"}} data-testid="add-error">{err}</div>}
@@ -644,6 +652,10 @@ export default function AdminGroupDetail() {
                 <label className="flex items-center gap-2.5 cursor-pointer py-1">
                   <input type="checkbox" id="enable_comments" checked={!!editData.enable_comments} onChange={e=>setField("enable_comments",e.target.checked)} className="w-5 h-5"/>
                   <span className="text-sm">Enable member comments</span>
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer py-1">
+                  <input type="checkbox" id="allow_multiple_slots" checked={!!editData.allow_multiple_slots} onChange={e=>setField("allow_multiple_slots",e.target.checked)} className="w-5 h-5"/>
+                  <span className="text-sm">Allow multiple slots per member <span className="font-normal text-xs" style={{color:"var(--muted)"}}>— lets the same person hold more than one payout position</span></span>
                 </label>
               </div>
 

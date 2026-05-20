@@ -113,6 +113,7 @@ class GroupCreate(BaseModel):
     whatsapp_group_name: Optional[str] = ""
     rules_text: Optional[str] = ""
     enable_comments: bool = True
+    allow_multiple_slots: bool = False
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = None
@@ -132,6 +133,7 @@ class GroupUpdate(BaseModel):
     whatsapp_group_name: Optional[str] = None
     rules_text: Optional[str] = None
     enable_comments: Optional[bool] = None
+    allow_multiple_slots: Optional[bool] = None
     status: Optional[Literal["active", "paused", "completed"]] = None
 
 class AddMember(BaseModel):
@@ -315,6 +317,7 @@ async def create_group(data: GroupCreate, admin=Depends(require_admin)):
         "whatsapp_group_name": data.whatsapp_group_name or "",
         "rules_text": data.rules_text or "",
         "enable_comments": data.enable_comments,
+        "allow_multiple_slots": data.allow_multiple_slots,
         "status": "active",
         "created_by": admin["id"],
         "created_at": now_utc().isoformat(),
@@ -461,13 +464,21 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
         raise HTTPException(404, "User not found. Member must sign up first.")
     if user["role"] not in ("member", "admin", "super_admin"):
         raise HTTPException(400, "Invalid user")
+    multi_slots = bool(group.get("allow_multiple_slots", False))
     existing = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
-    if existing:
-        raise HTTPException(400, "User already in group")
+    if existing and not multi_slots:
+        raise HTTPException(400, "User already in group. Enable 'Allow multiple slots' in group settings to add them again.")
     count = await db.group_members.count_documents({"group_id": group_id})
     if count >= group["member_limit"]:
         raise HTTPException(400, "Group member limit reached")
+    # If adding a second+ slot, require an explicit position
+    if existing and multi_slots and not data.payout_position:
+        raise HTTPException(400, "Specify a payout position for the extra slot.")
     position = data.payout_position or (count + 1)
+    # Guard against duplicate position
+    pos_taken = await db.group_members.find_one({"group_id": group_id, "payout_position": position})
+    if pos_taken:
+        raise HTTPException(400, f"Payout position {position} is already taken.")
     gm = {
         "id": str(uuid.uuid4()),
         "group_id": group_id,
@@ -527,9 +538,9 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
 class UpdateMemberIn(BaseModel):
     payout_position: Optional[int] = None
 
-@api.patch("/admin/groups/{group_id}/members/{user_id}")
-async def update_member(group_id: str, user_id: str, data: UpdateMemberIn, admin=Depends(require_admin)):
-    gm = await db.group_members.find_one({"group_id": group_id, "user_id": user_id})
+@api.patch("/admin/groups/{group_id}/members/{member_id}")
+async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, admin=Depends(require_admin)):
+    gm = await db.group_members.find_one({"group_id": group_id, "id": member_id})
     if not gm:
         raise HTTPException(404, "Member not found")
     update: dict = {}
@@ -539,18 +550,21 @@ async def update_member(group_id: str, user_id: str, data: UpdateMemberIn, admin
         update["payout_position"] = data.payout_position
     if not update:
         return {"ok": True, "changed": 0}
-    await db.group_members.update_one({"group_id": group_id, "user_id": user_id}, {"$set": update})
+    await db.group_members.update_one({"id": member_id}, {"$set": update})
     await log_audit(admin["id"], "member_updated", target=group_id,
-                    meta={"user_id": user_id, "changes": update})
+                    meta={"member_id": member_id, "changes": update})
     return {"ok": True, "changed": len(update)}
 
-@api.delete("/admin/groups/{group_id}/members/{user_id}")
-async def remove_member(group_id: str, user_id: str, reason: Optional[str] = None, admin=Depends(require_admin)):
-    res = await db.group_members.delete_one({"group_id": group_id, "user_id": user_id})
+@api.delete("/admin/groups/{group_id}/members/{member_id}")
+async def remove_member(group_id: str, member_id: str, reason: Optional[str] = None, admin=Depends(require_admin)):
+    gm = await db.group_members.find_one({"group_id": group_id, "id": member_id})
+    if not gm:
+        raise HTTPException(404, "Member not found")
+    res = await db.group_members.delete_one({"id": member_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Member not found")
     await log_audit(admin["id"], "member_removed", target=group_id,
-                    meta={"user_id": user_id, "reason": reason or ""})
+                    meta={"user_id": gm["user_id"], "member_id": member_id, "reason": reason or ""})
     return {"ok": True}
 
 # ---------------- PRIVATE MEMBER MESSAGES ----------------
