@@ -548,6 +548,13 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
             await db.member_cycle_status.insert_many(docs, ordered=False)
         except Exception:
             pass  # duplicate key on extra slot — existing records are kept
+    # Recalculate per-cycle expected_amount for this user based on total slot count
+    slot_count = await db.group_members.count_documents({"group_id": group_id, "user_id": user["id"]})
+    per_cycle_due = group["contribution_amount"] * slot_count
+    await db.member_cycle_status.update_many(
+        {"group_id": group_id, "user_id": user["id"]},
+        {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+    )
     # assign payout if no other for this position
     cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": position})
     if cycle and not cycle.get("payout_user_id"):
@@ -600,6 +607,18 @@ async def remove_member(group_id: str, member_id: str, reason: Optional[str] = N
     res = await db.group_members.delete_one({"id": member_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Member not found")
+    # Recalculate cycle obligations after slot removal
+    remaining_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": gm["user_id"]})
+    if remaining_slots == 0:
+        # Last slot — remove all cycle status records for this user in this group
+        await db.member_cycle_status.delete_many({"group_id": group_id, "user_id": gm["user_id"]})
+    else:
+        grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
+        per_cycle_due = grp["contribution_amount"] * remaining_slots
+        await db.member_cycle_status.update_many(
+            {"group_id": group_id, "user_id": gm["user_id"]},
+            {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+        )
     await log_audit(admin["id"], "member_removed", target=group_id,
                     meta={"user_id": gm["user_id"], "member_id": member_id, "reason": reason or ""})
     return {"ok": True}
@@ -793,11 +812,25 @@ async def confirm_payout(group_id: str, cycle_no: int, admin=Depends(require_adm
 @api.get("/groups/my")
 async def my_groups(user=Depends(get_current_user)):
     memberships = await db.group_members.find({"user_id": user["id"]}, {"_id": 0}).to_list(100)
-    out = []
+    # Aggregate all slots per group
+    by_group: dict = {}
     for m in memberships:
-        g = await db.groups.find_one({"id": m["group_id"]}, {"_id": 0})
-        if g:
-            out.append({**g, "payout_position": m["payout_position"]})
+        gid = m["group_id"]
+        if gid not in by_group:
+            by_group[gid] = []
+        by_group[gid].append(m)
+    out = []
+    for gid, slots in by_group.items():
+        g = await db.groups.find_one({"id": gid}, {"_id": 0})
+        if not g:
+            continue
+        slot_positions = sorted([s["payout_position"] for s in slots])
+        out.append({
+            **g,
+            "my_slots": slot_positions,
+            "payout_position": slot_positions[0],          # kept for backward compat
+            "my_monthly_due": g["contribution_amount"] * len(slot_positions),
+        })
     return out
 
 @api.get("/groups/{group_id}/detail")

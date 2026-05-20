@@ -54,14 +54,20 @@ export default function GroupDetail() {
   const mySlots = members.filter(m => m.user_id === user.id).sort((a,b)=>a.payout_position-b.payout_position);
   // Cycles where I am the payout recipient
   const myPayoutCycles = cycles.filter(c => c.payout_user_id === user.id);
-  // Expected payout per slot = contribution × active member count
-  const expectedPayout = group.contribution_amount * members.length;
-  // Next upcoming due cycle for me
+  // Total slots in group (each slot = one contribution per cycle)
+  const totalSlots = members.length;
+  // Expected payout per slot = contribution × total slots in group
+  const expectedPayoutPerSlot = group.contribution_amount * totalSlots;
+  // My monthly obligation = contribution × my slot count
+  const myMonthlyDue = group.contribution_amount * mySlots.length;
+  // Next upcoming due cycle for me (use personal expected_amount from status record)
   const today = new Date();
   const nextDue = cycles
     .filter(c => { const s = statusByCycle[c.cycle_no]; return s && (s.status === "Due" || s.status === "Not_Due"); })
     .filter(c => new Date(c.due_date) >= today)
     .sort((a,b) => new Date(a.due_date) - new Date(b.due_date))[0] || null;
+  // Personal amount due for next cycle (from status record, reflects slot count)
+  const nextDueAmount = nextDue ? (statusByCycle[nextDue.cycle_no]?.expected_amount ?? myMonthlyDue) : 0;
   // Bank set?
   const bankSet = !!(user.bank_name && user.bank_account_number && user.bank_account_name);
 
@@ -89,7 +95,9 @@ export default function GroupDetail() {
 
   const openUpload = (cycle) => {
     setUploadCycle(cycle.cycle_no);
-    setUploadAmount(String(cycle.expected_amount));
+    // Use personal expected_amount from status record (reflects multi-slot obligation)
+    const personal = statusByCycle[cycle.cycle_no]?.expected_amount ?? myMonthlyDue ?? cycle.expected_amount;
+    setUploadAmount(String(personal));
     setUploadOpen(true);
   };
 
@@ -133,23 +141,28 @@ export default function GroupDetail() {
         {!isAdmin && mySlots.length > 0 && (
           <div className="card-tactile p-4 sm:p-5 mb-4 sm:mb-6">
             <div className="label-eyebrow mb-3 flex items-center gap-1.5"><Star size={12}/> My Ajo at a glance</div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div>
                 <div className="text-xs" style={{color:"var(--muted)"}}>My slot{mySlots.length>1?"s":""}</div>
                 <div className="font-display text-lg mt-0.5">{mySlots.map(s=>`#${s.payout_position}`).join(", ")}</div>
               </div>
               <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>Monthly due</div>
+                <div className="font-display text-lg mt-0.5">{fmtMoney(myMonthlyDue)}</div>
+                {mySlots.length > 1 && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{mySlots.length} slots × {fmtMoney(group.contribution_amount)}</div>}
+              </div>
+              <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>Payout per slot</div>
+                <div className="font-display text-lg mt-0.5" style={{color:"var(--primary)"}}>{fmtMoney(expectedPayoutPerSlot)}</div>
+                <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{totalSlots} slots × {fmtMoney(group.contribution_amount)}</div>
+              </div>
+              <div>
                 <div className="text-xs" style={{color:"var(--muted)"}}>My payout month{myPayoutCycles.length>1?"s":""}</div>
-                <div className="font-display text-base mt-0.5">
+                <div className="font-display text-sm mt-0.5">
                   {myPayoutCycles.length > 0
                     ? myPayoutCycles.map(c => fmtDate(c.due_date)).join(", ")
                     : <span style={{color:"var(--muted)"}}>Not assigned yet</span>}
                 </div>
-              </div>
-              <div>
-                <div className="text-xs" style={{color:"var(--muted)"}}>Expected payout{mySlots.length>1?" (per slot)":""}</div>
-                <div className="font-display text-lg mt-0.5" style={{color:"var(--primary)"}}>{fmtMoney(expectedPayout)}</div>
-                <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{members.length} members × {fmtMoney(group.contribution_amount)}</div>
               </div>
               <div>
                 <div className="text-xs" style={{color:"var(--muted)"}}>Bank for payout</div>
@@ -174,7 +187,8 @@ export default function GroupDetail() {
             <CalendarClock size={18} className="shrink-0" style={{color:"var(--primary)"}}/>
             <div className="flex-1 min-w-0">
               <span className="text-sm font-semibold">Next contribution due: </span>
-              <span className="text-sm">Cycle #{nextDue.cycle_no} · {fmtDate(nextDue.due_date)} · {fmtMoney(nextDue.expected_amount)}</span>
+              <span className="text-sm">Cycle #{nextDue.cycle_no} · {fmtDate(nextDue.due_date)} · {fmtMoney(nextDueAmount)}</span>
+              {mySlots.length > 1 && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{mySlots.length} slots × {fmtMoney(group.contribution_amount)}</div>}
             </div>
             <button onClick={()=>openUpload(nextDue)} className="shrink-0 btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1">
               <Upload size={11}/> Pay now

@@ -73,10 +73,18 @@ export default function MemberDashboard() {
                       <div className="font-display text-lg sm:text-xl mt-1 truncate">{g.name}</div>
                       {g.description && <div className="text-xs mt-1 truncate" style={{color:"var(--muted)"}}>{g.description}</div>}
                     </div>
-                    <span className="badge s-Payout_Eligible shrink-0">#{g.payout_position}</span>
+                    <div className="flex gap-1 flex-wrap shrink-0 justify-end">
+                      {(g.my_slots || [g.payout_position]).map(pos =>
+                        <span key={pos} className="badge s-Payout_Eligible">#{pos}</span>
+                      )}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                    <div><div className="label-eyebrow">Contribution</div><div className="font-display text-base sm:text-lg">{fmtMoney(g.contribution_amount)}</div></div>
+                    <div>
+                      <div className="label-eyebrow">Monthly due</div>
+                      <div className="font-display text-base sm:text-lg">{fmtMoney(g.my_monthly_due || g.contribution_amount)}</div>
+                      {(g.my_slots?.length > 1) && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{g.my_slots.length} slots × {fmtMoney(g.contribution_amount)}</div>}
+                    </div>
                     <div><div className="label-eyebrow">Starts</div><div className="font-display text-base sm:text-lg">{fmtDate(g.start_date)}</div></div>
                   </div>
                 </Link>
