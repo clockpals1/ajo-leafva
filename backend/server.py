@@ -439,6 +439,33 @@ async def update_group(group_id: str, data: GroupUpdate, admin=Depends(require_a
     updated = await db.groups.find_one({"id": group_id}, {"_id": 0})
     return updated
 
+class CycleUpdate(BaseModel):
+    due_date: Optional[str] = None  # YYYY-MM-DD
+
+@api.patch("/admin/groups/{group_id}/cycles/{cycle_id}")
+async def update_cycle(group_id: str, cycle_id: str, data: CycleUpdate, admin=Depends(require_admin)):
+    c = await db.cycles.find_one({"id": cycle_id, "group_id": group_id})
+    if not c:
+        raise HTTPException(404, "Cycle not found")
+    if not data.due_date:
+        return {"ok": True}
+    try:
+        new_date = date.fromisoformat(data.due_date)
+    except ValueError:
+        raise HTTPException(400, "Invalid date format. Use YYYY-MM-DD.")
+    await db.cycles.update_one({"id": cycle_id}, {"$set": {"due_date": data.due_date}})
+    # Update member_cycle_status statuses based on new date
+    today_d = now_utc().date()
+    new_status = "Due" if new_date <= today_d else "Not_Due"
+    await db.member_cycle_status.update_many(
+        {"group_id": group_id, "cycle_no": c["cycle_no"], "status": {"$in": ["Due", "Not_Due"]}},
+        {"$set": {"status": new_status}}
+    )
+    await log_audit(admin["id"], "cycle_updated", target=group_id,
+                    meta={"cycle_id": cycle_id, "due_date": data.due_date})
+    updated = await db.cycles.find_one({"id": cycle_id}, {"_id": 0})
+    return updated
+
 @api.delete("/admin/groups/{group_id}")
 async def delete_group(group_id: str, admin=Depends(require_admin)):
     g = await db.groups.find_one({"id": group_id})
@@ -464,16 +491,12 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
         raise HTTPException(404, "User not found. Member must sign up first.")
     if user["role"] not in ("member", "admin", "super_admin"):
         raise HTTPException(400, "Invalid user")
-    multi_slots = bool(group.get("allow_multiple_slots", False))
     existing = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
-    if existing and not multi_slots:
-        raise HTTPException(400, "User already in group. Enable 'Allow multiple slots' in group settings to add them again.")
+    if existing and not data.payout_position:
+        raise HTTPException(400, "This member already has a slot. Specify a unique payout position to add another slot.")
     count = await db.group_members.count_documents({"group_id": group_id})
     if count >= group["member_limit"]:
         raise HTTPException(400, "Group member limit reached")
-    # If adding a second+ slot, require an explicit position
-    if existing and multi_slots and not data.payout_position:
-        raise HTTPException(400, "Specify a payout position for the extra slot.")
     position = data.payout_position or (count + 1)
     # Guard against duplicate position
     pos_taken = await db.group_members.find_one({"group_id": group_id, "payout_position": position})

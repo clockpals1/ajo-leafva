@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X, Plus } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -63,7 +63,11 @@ export default function AdminGroupDetail() {
   const [messages, setMessages] = useState([]);
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removeReason, setRemoveReason] = useState("");
-  const [editingPos, setEditingPos] = useState({});  // { user_id: draftValue }
+  const [editingPos, setEditingPos] = useState({});
+  const [addSlotTarget, setAddSlotTarget] = useState(null); // { id, email, name }
+  const [addSlotPos, setAddSlotPos] = useState("");
+  const [addSlotErr, setAddSlotErr] = useState("");
+  const [editingDueDate, setEditingDueDate] = useState({}); // { cycle_id: draft_date }
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -107,11 +111,16 @@ export default function AdminGroupDetail() {
 
   const { group, members, cycles, statuses } = data;
   const memberIds = new Set(members.map(m=>m.user_id));
-  const multiSlots = !!group.allow_multiple_slots;
-  const availableUsers = multiSlots
-    ? users.filter(u => u.role === "member")
-    : users.filter(u => u.role === "member" && !memberIds.has(u.id));
+  const newUsers = users.filter(u => u.role === "member" && !memberIds.has(u.id));
   const userMap = Object.fromEntries(users.map(u => [u.id, u]));
+
+  // Group members by user_id so multi-slot members appear as one row
+  const membersByUser = {};
+  for (const m of [...members].sort((a,b)=>a.payout_position-b.payout_position)) {
+    if (!membersByUser[m.user_id]) membersByUser[m.user_id] = { info: m, slots: [] };
+    membersByUser[m.user_id].slots.push(m);
+  }
+  const groupedMembers = Object.values(membersByUser).sort((a,b)=>a.slots[0].payout_position-b.slots[0].payout_position);
 
   const copyText = (text) => navigator.clipboard?.writeText(text);
 
@@ -150,6 +159,22 @@ export default function AdminGroupDetail() {
     if (!window.confirm(`Confirm payout for cycle ${cycleNo}?`)) return;
     try { await api.post(`/admin/payouts/${id}/${cycleNo}/confirm`); load(); }
     catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const addSlot = async (e) => {
+    e.preventDefault(); setAddSlotErr("");
+    try {
+      await api.post(`/admin/groups/${id}/members`, { email: addSlotTarget.email, payout_position: Number(addSlotPos) });
+      setAddSlotTarget(null); setAddSlotPos(""); load();
+    } catch (e) { setAddSlotErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const saveDueDate = async (cycleId, draftDate) => {
+    try {
+      await api.patch(`/admin/groups/${id}/cycles/${cycleId}`, { due_date: draftDate });
+      setEditingDueDate(prev => { const n = {...prev}; delete n[cycleId]; return n; });
+      load();
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
   // Build status matrix: members x cycles
@@ -231,47 +256,59 @@ export default function AdminGroupDetail() {
             <div className="lg:col-span-2 card-tactile overflow-hidden" data-testid="group-members-table">
               {/* Mobile member cards */}
               <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
-                {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
+                {groupedMembers.map(({ info: m, slots }) => {
                   const u = userMap[m.user_id];
                   const hasBank = u?.bank_name && u?.bank_account_number;
                   return (
-                    <div key={m.id} className="p-4">
-                      <div className="flex items-start justify-between gap-2 mb-1">
+                    <div key={m.user_id} className="p-4">
+                      <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="min-w-0">
                           <div className="font-semibold text-sm truncate">{m.user_name}</div>
                           <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>
+                          {hasBank ? (
+                            <div className="text-xs mt-1 flex items-center gap-1" style={{color:"var(--muted)"}}>
+                              <span>{u.bank_name} · {u.bank_account_number}</span>
+                              <button onClick={()=>copyText(u.bank_account_number)} title="Copy" className="opacity-50 hover:opacity-100"><Copy size={10}/></button>
+                            </div>
+                          ) : (
+                            <span className="text-xs px-2 py-0.5 rounded mt-1 inline-block" style={{background:"#fee2e2",color:"#991b1b"}}>Bank not set</span>
+                          )}
                         </div>
-                        {editingPos[m.id] !== undefined ? (
-                          <div className="flex items-center gap-1 shrink-0">
-                            <input type="number" min={1} value={editingPos[m.id]}
-                              onChange={e=>setEditingPos(p=>({...p,[m.id]:e.target.value}))}
-                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.id); if(e.key==="Escape") cancelEditPos(m.id); }}
-                              className="w-14 border rounded px-1.5 py-1 text-sm text-center font-display" autoFocus />
-                            <button onClick={()=>savePosition(m.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
-                            <button onClick={()=>cancelEditPos(m.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
-                          </div>
-                        ) : (
-                          <button onClick={()=>startEditPos(m.id, m.payout_position)}
-                            className="badge s-Payout_Eligible shrink-0 inline-flex items-center gap-1 cursor-pointer group"
-                            title="Click to edit payout position">
-                            #{m.payout_position} <Pencil size={9} className="opacity-0 group-hover:opacity-60" />
-                          </button>
-                        )}
-                      </div>
-                      {hasBank ? (
-                        <div className="text-xs mt-1.5 flex items-center gap-1" style={{color:"var(--muted)"}}>
-                          <span>{u.bank_name} · {u.bank_account_number}</span>
-                          <button onClick={()=>copyText(u.bank_account_number)} title="Copy" className="opacity-50 hover:opacity-100"><Copy size={10}/></button>
-                        </div>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 rounded mt-1.5 inline-block" style={{background:"#fee2e2", color:"#991b1b"}}>Bank not set</span>
-                      )}
-                      <div className="flex items-center justify-between mt-2">
-                        <div className="text-xs" style={{color:"var(--muted)"}}>Joined {fmtDate(m.joined_at)}</div>
-                        <button onClick={()=>remove(m.id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.id}`}>
-                          <Trash2 size={12}/> Remove
+                        <button
+                          onClick={()=>{ setAddSlotTarget({id:m.user_id,email:m.user_email,name:m.user_name}); setAddSlotPos(""); setAddSlotErr(""); }}
+                          className="shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1"
+                          style={{background:"var(--primary)15",color:"var(--primary)"}}>
+                          <Plus size={11}/> Add slot
                         </button>
                       </div>
+                      <div className="space-y-1.5 mb-2">
+                        {slots.map(s => {
+                          const pc = cycles.find(c=>c.payout_user_id===s.user_id && c.cycle_no===s.payout_position);
+                          return (
+                            <div key={s.id} className="flex items-center gap-2 flex-wrap">
+                              {editingPos[s.id] !== undefined ? (
+                                <div className="flex items-center gap-1">
+                                  <input type="number" min={1} value={editingPos[s.id]}
+                                    onChange={e=>setEditingPos(p=>({...p,[s.id]:e.target.value}))}
+                                    onKeyDown={e=>{ if(e.key==="Enter") savePosition(s.id); if(e.key==="Escape") cancelEditPos(s.id); }}
+                                    className="w-14 border rounded px-1.5 py-1 text-sm text-center font-display" autoFocus />
+                                  <button onClick={()=>savePosition(s.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
+                                  <button onClick={()=>cancelEditPos(s.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
+                                </div>
+                              ) : (
+                                <button onClick={()=>startEditPos(s.id,s.payout_position)}
+                                  className="badge s-Payout_Eligible inline-flex items-center gap-1 cursor-pointer group"
+                                  title="Click to edit position">
+                                  #{s.payout_position} <Pencil size={8} className="opacity-0 group-hover:opacity-60"/>
+                                </button>
+                              )}
+                              {pc && <span className="text-xs" style={{color:"var(--muted)"}}>{fmtDate(pc.due_date)}</span>}
+                              <button onClick={()=>remove(s.id,`${m.user_name} slot #${s.payout_position}`)} className="text-red-600 ml-auto opacity-60 hover:opacity-100" data-testid={`remove-${s.id}`} title="Remove this slot"><Trash2 size={12}/></button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="text-xs" style={{color:"var(--muted)"}}>Joined {fmtDate(m.joined_at)} · {slots.length} slot{slots.length>1?"s":""}</div>
                     </div>
                   );
                 })}
@@ -280,39 +317,56 @@ export default function AdminGroupDetail() {
               {/* Desktop table */}
               <table className="desktop-table w-full text-sm">
                 <thead className="bg-white/50"><tr className="text-left">
-                  <th className="px-4 py-3 label-eyebrow">#</th>
                   <th className="px-4 py-3 label-eyebrow">Member</th>
-                  <th className="px-4 py-3 label-eyebrow">Email</th>
+                  <th className="px-4 py-3 label-eyebrow">Slots &amp; payout dates</th>
                   <th className="px-4 py-3 label-eyebrow">Bank details</th>
                   <th className="px-4 py-3 label-eyebrow">Joined</th>
-                  <th className="px-4 py-3 label-eyebrow"></th>
                 </tr></thead>
                 <tbody>
-                  {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
+                  {groupedMembers.map(({ info: m, slots }) => {
                     const u = userMap[m.user_id];
                     const hasBank = u?.bank_name && u?.bank_account_number;
                     return (
-                    <tr key={m.id} className="border-t" style={{borderColor:"var(--border)"}}>
+                    <tr key={m.user_id} className="border-t align-top" style={{borderColor:"var(--border)"}}>
                       <td className="px-4 py-3">
-                        {editingPos[m.id] !== undefined ? (
-                          <div className="flex items-center gap-1">
-                            <input type="number" min={1} value={editingPos[m.id]}
-                              onChange={e=>setEditingPos(p=>({...p,[m.id]:e.target.value}))}
-                              onKeyDown={e=>{ if(e.key==="Enter") savePosition(m.id); if(e.key==="Escape") cancelEditPos(m.id); }}
-                              className="w-16 border rounded px-2 py-1 text-sm text-center font-display" autoFocus />
-                            <button onClick={()=>savePosition(m.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
-                            <button onClick={()=>cancelEditPos(m.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
-                          </div>
-                        ) : (
-                          <button onClick={()=>startEditPos(m.id, m.payout_position)}
-                            className="font-display inline-flex items-center gap-1 group opacity-90 hover:opacity-100"
-                            title="Click to edit payout position">
-                            #{m.payout_position} <Pencil size={10} className="opacity-0 group-hover:opacity-60" />
-                          </button>
-                        )}
+                        <div className="font-medium">{m.user_name}</div>
+                        <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{m.user_email}</div>
                       </td>
-                      <td className="px-4 py-3 font-medium">{m.user_name}</td>
-                      <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{m.user_email}</td>
+                      <td className="px-4 py-3">
+                        <div className="space-y-1.5">
+                          {slots.map(s => {
+                            const pc = cycles.find(c=>c.payout_user_id===s.user_id && c.cycle_no===s.payout_position);
+                            return (
+                              <div key={s.id} className="flex items-center gap-2">
+                                {editingPos[s.id] !== undefined ? (
+                                  <div className="flex items-center gap-1">
+                                    <input type="number" min={1} value={editingPos[s.id]}
+                                      onChange={e=>setEditingPos(p=>({...p,[s.id]:e.target.value}))}
+                                      onKeyDown={e=>{ if(e.key==="Enter") savePosition(s.id); if(e.key==="Escape") cancelEditPos(s.id); }}
+                                      className="w-16 border rounded px-2 py-1 text-sm text-center font-display" autoFocus />
+                                    <button onClick={()=>savePosition(s.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
+                                    <button onClick={()=>cancelEditPos(s.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={()=>startEditPos(s.id,s.payout_position)}
+                                    className="font-display inline-flex items-center gap-1 group opacity-90 hover:opacity-100"
+                                    title="Click to edit position">
+                                    #{s.payout_position} <Pencil size={10} className="opacity-0 group-hover:opacity-60"/>
+                                  </button>
+                                )}
+                                {pc && <span className="text-xs" style={{color:"var(--muted)"}}>{fmtDate(pc.due_date)}</span>}
+                                <button onClick={()=>remove(s.id,`${m.user_name} slot #${s.payout_position}`)} className="text-red-600 opacity-40 hover:opacity-100 ml-1" title="Remove this slot" data-testid={`remove-${s.id}`}><Trash2 size={12}/></button>
+                              </div>
+                            );
+                          })}
+                          <button
+                            onClick={()=>{ setAddSlotTarget({id:m.user_id,email:m.user_email,name:m.user_name}); setAddSlotPos(""); setAddSlotErr(""); }}
+                            className="text-xs font-semibold inline-flex items-center gap-1 mt-1 opacity-70 hover:opacity-100"
+                            style={{color:"var(--primary)"}}>
+                            <Plus size={11}/> Add slot
+                          </button>
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         {hasBank ? (
                           <div className="text-xs">
@@ -324,43 +378,33 @@ export default function AdminGroupDetail() {
                             <div style={{color:"var(--muted)"}}>{u.bank_account_name}</div>
                           </div>
                         ) : (
-                          <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2", color:"#991b1b"}}>Not set</span>
+                          <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2",color:"#991b1b"}}>Not set</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={()=>remove(m.id, m.user_name)} className="text-xs text-red-700 inline-flex items-center gap-1" data-testid={`remove-${m.id}`}>
-                          <Trash2 size={12}/> Remove
-                        </button>
-                      </td>
                     </tr>
                     );
                   })}
-                  {members.length===0 && <tr><td colSpan={6} className="px-4 py-10 text-center" style={{color:"var(--muted)"}}>No members yet.</td></tr>}
+                  {members.length===0 && <tr><td colSpan={4} className="px-4 py-10 text-center" style={{color:"var(--muted)"}}>No members yet.</td></tr>}
                 </tbody>
               </table>
             </div>
             <form onSubmit={addMember} className="card-tactile p-4 sm:p-5" data-testid="add-member-form">
               <h3 className="font-display text-lg mb-3 flex items-center gap-2"><UserPlus size={16}/> Add member</h3>
-              {multiSlots && (
-                <div className="mb-3 px-3 py-2 rounded text-xs" style={{background:"#eff6ff",color:"#1d4ed8"}}>
-                  Multiple slots enabled — you can add the same person twice with different positions.
-                </div>
-              )}
               <div className="mb-3">
                 <label className="form-label">Member</label>
                 <select required value={addEmail} onChange={e=>setAddEmail(e.target.value)} className="form-input" data-testid="add-email">
                   <option value="">— Select existing user —</option>
-                  {availableUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}{memberIds.has(u.id) ? " (already in group)" : ""}</option>)}
+                  {newUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}</option>)}
                 </select>
               </div>
               <div className="mb-3">
-                <label className="form-label">Payout position{multiSlots ? " (required for extra slots)" : " (optional)"}</label>
+                <label className="form-label">Payout position <span className="font-normal">(optional)</span></label>
                 <input type="number" value={addPos} onChange={e=>setAddPos(e.target.value)} className="form-input" data-testid="add-position"/>
               </div>
               {err && <div className="px-3 py-2 rounded-lg text-sm text-red-700 mb-3" style={{background:"#fef2f2"}} data-testid="add-error">{err}</div>}
               <button className="btn-primary text-sm w-full" data-testid="add-submit">Add to group</button>
-              <p className="text-xs mt-3" style={{color:"var(--muted)"}}>Only existing platform users. New members should use the Invitations tab.</p>
+              <p className="text-xs mt-3" style={{color:"var(--muted)"}}>To give an existing member a second payout slot, use the <b>+ Add slot</b> button on their row.</p>
             </form>
           </div>
         )}
@@ -483,7 +527,21 @@ export default function AdminGroupDetail() {
                     <div className="flex items-start justify-between gap-2 mb-1.5">
                       <div>
                         <div className="font-semibold text-sm">Cycle #{c.cycle_no}</div>
-                        <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{fmtDate(c.due_date)}</div>
+                        <div className="text-xs mt-0.5 flex items-center gap-1" style={{color:"var(--muted)"}}>
+                          {editingDueDate[c.id] !== undefined ? (
+                            <>
+                              <input type="date" value={editingDueDate[c.id]}
+                                onChange={e=>setEditingDueDate(p=>({...p,[c.id]:e.target.value}))}
+                                className="border rounded px-1.5 py-0.5 text-xs" />
+                              <button onClick={()=>saveDueDate(c.id,editingDueDate[c.id])} className="font-semibold px-1.5 py-0.5 rounded text-xs" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
+                              <button onClick={()=>setEditingDueDate(p=>{const n={...p};delete n[c.id];return n;})} className="px-1.5 py-0.5 rounded text-xs" style={{background:"var(--surface)"}} >✕</button>
+                            </>
+                          ) : (
+                            <button onClick={()=>setEditingDueDate(p=>({...p,[c.id]:c.due_date}))} className="inline-flex items-center gap-1 group" title="Edit due date">
+                              {fmtDate(c.due_date)} <Pencil size={9} className="opacity-0 group-hover:opacity-60"/>
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <span className={`badge shrink-0 ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
                     </div>
@@ -523,7 +581,22 @@ export default function AdminGroupDetail() {
                   return (
                     <tr key={c.id} className="border-t" style={{borderColor:"var(--border)"}}>
                       <td className="px-4 py-3 font-display">#{c.cycle_no}</td>
-                      <td className="px-4 py-3">{fmtDate(c.due_date)}</td>
+                      <td className="px-4 py-3">
+                        {editingDueDate[c.id] !== undefined ? (
+                          <div className="flex items-center gap-1">
+                            <input type="date" value={editingDueDate[c.id]}
+                              onChange={e=>setEditingDueDate(p=>({...p,[c.id]:e.target.value}))}
+                              className="border rounded px-2 py-1 text-sm" />
+                            <button onClick={()=>saveDueDate(c.id,editingDueDate[c.id])} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
+                            <button onClick={()=>setEditingDueDate(p=>{const n={...p};delete n[c.id];return n;})} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>setEditingDueDate(p=>({...p,[c.id]:c.due_date}))}
+                            className="inline-flex items-center gap-1 group opacity-90 hover:opacity-100" title="Edit due date">
+                            {fmtDate(c.due_date)} <Pencil size={10} className="opacity-0 group-hover:opacity-60"/>
+                          </button>
+                        )}
+                      </td>
                       <td className="px-4 py-3 font-medium">{recipient?.user_name || <span style={{color:"var(--muted)"}}>—</span>}</td>
                       <td className="px-4 py-3">
                         {bankStr ? (
@@ -681,6 +754,26 @@ export default function AdminGroupDetail() {
           </div>
         )}
       </main>
+
+      {/* Add slot modal */}
+      {addSlotTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onClick={()=>setAddSlotTarget(null)}>
+          <form onClick={e=>e.stopPropagation()} onSubmit={addSlot}
+            className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 sm:p-6">
+            <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4 sm:hidden" />
+            <h3 className="font-display text-lg mb-1">Add slot — {addSlotTarget.name}</h3>
+            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Each extra slot gives this member an additional payout position in the group.</p>
+            <label className="form-label">Payout position <span className="text-red-600">*</span></label>
+            <input type="number" required min={1} value={addSlotPos} onChange={e=>setAddSlotPos(e.target.value)}
+              className="form-input mb-3" autoFocus placeholder="e.g. 6" />
+            {addSlotErr && <div className="text-red-700 text-sm mb-3 px-3 py-2 rounded" style={{background:"#fef2f2"}}>{addSlotErr}</div>}
+            <div className="flex gap-3">
+              <button type="button" onClick={()=>setAddSlotTarget(null)} className="btn-secondary flex-1 text-sm">Cancel</button>
+              <button type="submit" className="btn-primary flex-1 text-sm">Add slot</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Remove member confirmation modal */}
       {removeTarget && (
