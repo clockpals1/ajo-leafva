@@ -52,8 +52,9 @@ export default function GroupDetail() {
 
   // My slot(s) in this group
   const mySlots = members.filter(m => m.user_id === user.id).sort((a,b)=>a.payout_position-b.payout_position);
-  // Cycles where I am the payout recipient
-  const myPayoutCycles = cycles.filter(c => c.payout_user_id === user.id);
+  // Cycles where I am the payout recipient — scoped to my actual slot positions only
+  const mySlotPositions = new Set(mySlots.map(s => s.payout_position));
+  const myPayoutCycles = cycles.filter(c => c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no));
   // Total slots in group (each slot = one contribution per cycle)
   const totalSlots = members.length;
   // Expected payout per slot = contribution × total slots in group
@@ -231,7 +232,7 @@ export default function GroupDetail() {
               {cycles.map(c => {
                 const s = statusByCycle[c.cycle_no];
                 const canUpload = !isAdmin && s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due");
-                const isMyPayout = !isAdmin && c.payout_user_id === user.id;
+                const isMyPayout = !isAdmin && c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no);
                 return (
                   <div key={c.id} className="p-4" style={isMyPayout ? {background:"var(--primary)08",borderLeft:"3px solid var(--primary)"} : {}}>
                     <div className="flex items-start justify-between gap-2 mb-2">
@@ -274,7 +275,7 @@ export default function GroupDetail() {
                 {cycles.map(c => {
                   const s = statusByCycle[c.cycle_no];
                   const canUpload = !isAdmin && s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due");
-                  const isMyPayout = !isAdmin && c.payout_user_id === user.id;
+                  const isMyPayout = !isAdmin && c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no);
                   return (
                     <tr key={c.id} className="border-t" style={{borderColor:"var(--border)", background: isMyPayout ? "var(--primary)08" : ""}}>
                       <td className="px-4 py-3 font-display">
