@@ -539,7 +539,10 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
             "updated_at": now_utc().isoformat(),
         })
     if docs:
-        await db.member_cycle_status.insert_many(docs)
+        try:
+            await db.member_cycle_status.insert_many(docs, ordered=False)
+        except Exception:
+            pass  # duplicate key on extra slot — existing records are kept
     # assign payout if no other for this position
     cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": position})
     if cycle and not cycle.get("payout_user_id"):
