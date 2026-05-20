@@ -570,6 +570,15 @@ export default function AdminGroupDetail() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <label className="form-label">Total cycles</label>
+                  <input type="number" min={1} value={editData.total_cycles||""} onChange={e=>setField("total_cycles",Number(e.target.value))} className="form-input"/>
+                  <p className="text-xs mt-1" style={{color:"var(--muted)"}}>
+                    Reducing removes future (unpaid) cycles. Increasing adds new ones automatically.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
                   <label className="form-label">Frequency</label>
                   <select value={editData.frequency||"monthly"} onChange={e=>setField("frequency",e.target.value)} className="form-input">
                     <option value="monthly">Monthly</option>

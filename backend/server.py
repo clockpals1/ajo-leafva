@@ -119,6 +119,7 @@ class GroupUpdate(BaseModel):
     description: Optional[str] = None
     contribution_amount: Optional[float] = None
     frequency: Optional[Literal["monthly", "weekly", "biweekly"]] = None
+    total_cycles: Optional[int] = None
     member_limit: Optional[int] = None
     due_day: Optional[int] = None
     due_time: Optional[str] = None
@@ -362,9 +363,74 @@ async def update_group(group_id: str, data: GroupUpdate, admin=Depends(require_a
     g = await db.groups.find_one({"id": group_id})
     if not g:
         raise HTTPException(404, "Group not found")
-    updates = {k: v for k, v in data.dict().items() if v is not None}
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
+
+    # ── Handle total_cycles change: add or remove cycle records ──────────────
+    if "total_cycles" in updates:
+        new_total = int(updates["total_cycles"])
+        if new_total < 1:
+            raise HTTPException(400, "total_cycles must be at least 1")
+        old_total = int(g.get("total_cycles", 0))
+
+        if new_total < old_total:
+            # Guard: don't remove cycles that already have a completed payout
+            blocked = await db.cycles.find_one({
+                "group_id": group_id,
+                "cycle_no": {"$gt": new_total},
+                "payout_status": "completed",
+            })
+            if blocked:
+                raise HTTPException(400,
+                    f"Cannot reduce to {new_total} cycles — cycle {blocked['cycle_no']} "
+                    "already has a completed payout.")
+            await db.cycles.delete_many({"group_id": group_id, "cycle_no": {"$gt": new_total}})
+            await db.member_cycle_status.delete_many({"group_id": group_id, "cycle_no": {"$gt": new_total}})
+
+        elif new_total > old_total:
+            start = date.fromisoformat(g["start_date"])
+            freq = g["frequency"]
+            amt = float(g["contribution_amount"])
+            new_cycle_docs = []
+            for i in range(old_total, new_total):
+                due = _add_period(start, freq, i)
+                new_cycle_docs.append({
+                    "id": str(uuid.uuid4()),
+                    "group_id": group_id,
+                    "cycle_no": i + 1,
+                    "due_date": due.isoformat(),
+                    "expected_amount": amt,
+                    "payout_user_id": None,
+                    "payout_status": "pending",
+                    "payout_confirmed_at": None,
+                })
+            if new_cycle_docs:
+                await db.cycles.insert_many(new_cycle_docs)
+                # Add member_cycle_status rows for each active member
+                members = await db.group_members.find(
+                    {"group_id": group_id, "status": {"$ne": "removed"}}, {"_id": 0}
+                ).to_list(1000)
+                today_d = now_utc().date()
+                status_docs = []
+                for m in members:
+                    for c in new_cycle_docs:
+                        due_d = date.fromisoformat(c["due_date"])
+                        status_docs.append({
+                            "id": str(uuid.uuid4()),
+                            "group_id": group_id,
+                            "cycle_no": c["cycle_no"],
+                            "user_id": m["user_id"],
+                            "status": "Due" if due_d <= today_d else "Not_Due",
+                            "expected_amount": amt,
+                            "paid_amount": 0,
+                            "approved_at": None,
+                            "approver_id": None,
+                            "updated_at": now_utc().isoformat(),
+                        })
+                if status_docs:
+                    await db.member_cycle_status.insert_many(status_docs)
+
     await db.groups.update_one({"id": group_id}, {"$set": updates})
     await log_audit(admin["id"], "group_updated", target=group_id, meta=updates)
     updated = await db.groups.find_one({"id": group_id}, {"_id": 0})
