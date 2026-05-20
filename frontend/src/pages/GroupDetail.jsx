@@ -5,7 +5,7 @@ import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
 import Comments from "../components/Comments";
 import { useAuth } from "../AuthContext";
-import { Upload, MessageCircle, X, AlertTriangle, CalendarClock, Landmark, ArrowRight, Star } from "lucide-react";
+import { Upload, MessageCircle, X, AlertTriangle, CalendarClock, Landmark, ArrowRight, Star, CheckCircle2, Gift } from "lucide-react";
 
 export default function GroupDetail() {
   const { id } = useParams();
@@ -14,7 +14,6 @@ export default function GroupDetail() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
 
-  // Message admin modal state
   const [msgOpen, setMsgOpen] = useState(false);
   const [msgSubject, setMsgSubject] = useState("");
   const [msgBody, setMsgBody] = useState("");
@@ -31,7 +30,6 @@ export default function GroupDetail() {
     finally { setMsgBusy(false); }
   };
 
-  // Upload modal state
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadCycle, setUploadCycle] = useState(null);
   const [uploadAmount, setUploadAmount] = useState("");
@@ -46,33 +44,41 @@ export default function GroupDetail() {
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10">Loading...</div></div>;
 
   const { group, cycles, statuses, members } = data;
-  const myStatuses = statuses.filter(s => s.user_id === user.id);
-  const statusByCycle = Object.fromEntries(myStatuses.map(s=>[s.cycle_no, s]));
   const isAdmin = user.role === "admin" || user.role === "super_admin";
 
-  // My slot(s) in this group
-  const mySlots = members.filter(m => m.user_id === user.id).sort((a,b)=>a.payout_position-b.payout_position);
-  // Cycles where I am the payout recipient — scoped to my actual slot positions only
+  // ── Member-specific derived data ──
+  const myStatuses = statuses.filter(s => s.user_id === user.id);
+  const statusByCycle = Object.fromEntries(myStatuses.map(s => [s.cycle_no, s]));
+  const mySlots = members.filter(m => m.user_id === user.id).sort((a,b) => a.payout_position - b.payout_position);
   const mySlotPositions = new Set(mySlots.map(s => s.payout_position));
   const myPayoutCycles = cycles.filter(c => c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no));
-  // Total slots in group (each slot = one contribution per cycle)
-  const totalSlots = members.length;
-  // Expected payout per slot = contribution × total slots in group
-  const expectedPayoutPerSlot = group.contribution_amount * totalSlots;
-  // My monthly obligation = contribution × my slot count
-  const myMonthlyDue = group.contribution_amount * mySlots.length;
-  // Next upcoming due cycle for me (use personal expected_amount from status record)
+  // Per-cycle obligation = contribution × my slot count (backend keeps this in status.expected_amount)
+  const myMonthlyDue = group.contribution_amount * (mySlots.length || 1);
+  // What I receive per payout = contribution × total slots in group
+  const myPayoutAmount = group.contribution_amount * members.length;
+  // Next actionable cycle
   const today = new Date();
   const nextDue = cycles
-    .filter(c => { const s = statusByCycle[c.cycle_no]; return s && (s.status === "Due" || s.status === "Not_Due"); })
+    .filter(c => { const s = statusByCycle[c.cycle_no]; return s && (s.status === "Due" || s.status === "Not_Due" || s.status === "Overdue"); })
     .filter(c => new Date(c.due_date) >= today)
     .sort((a,b) => new Date(a.due_date) - new Date(b.due_date))[0] || null;
-  // Personal amount due for next cycle (from status record, reflects slot count)
-  const nextDueAmount = nextDue ? (statusByCycle[nextDue.cycle_no]?.expected_amount ?? myMonthlyDue) : 0;
-  // Bank set?
+  const nextDueAmount = nextDue
+    ? (statusByCycle[nextDue.cycle_no]?.expected_amount ?? myMonthlyDue)
+    : 0;
   const bankSet = !!(user.bank_name && user.bank_account_number && user.bank_account_name);
 
-  const fileToDataUrl = (f) => new Promise((res, rej) => { const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); });
+  // ── Grouped members (by user) for member-friendly list ──
+  const membersByUser = Object.values(
+    members.reduce((acc, m) => {
+      if (!acc[m.user_id]) {
+        acc[m.user_id] = { ...m, slots: [] };
+      }
+      acc[m.user_id].slots.push(m.payout_position);
+      return acc;
+    }, {})
+  ).sort((a,b) => Math.min(...a.slots) - Math.min(...b.slots));
+
+  const fileToDataUrl = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(f); });
 
   const submitUpload = async (e) => {
     e.preventDefault();
@@ -81,25 +87,37 @@ export default function GroupDetail() {
     try {
       const dataUrl = await fileToDataUrl(uploadFile);
       await api.post("/payments/upload", {
-        group_id: id,
-        cycle_no: uploadCycle,
-        amount: Number(uploadAmount),
-        receipt_data_url: dataUrl,
-        note: uploadNote,
+        group_id: id, cycle_no: uploadCycle,
+        amount: Number(uploadAmount), receipt_data_url: dataUrl, note: uploadNote,
       });
       setUploadOpen(false); setUploadFile(null); setUploadAmount(""); setUploadNote("");
       load();
-    } catch (e) {
-      alert(formatErr(e?.response?.data?.detail));
-    } finally { setUploading(false); }
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setUploading(false); }
   };
 
-  const openUpload = (cycle) => {
-    setUploadCycle(cycle.cycle_no);
-    // Use personal expected_amount from status record (reflects multi-slot obligation)
-    const personal = statusByCycle[cycle.cycle_no]?.expected_amount ?? myMonthlyDue ?? cycle.expected_amount;
-    setUploadAmount(String(personal));
+  const openUpload = (c) => {
+    setUploadCycle(c.cycle_no);
+    // personal amount from status record; fallback to myMonthlyDue
+    setUploadAmount(String(statusByCycle[c.cycle_no]?.expected_amount ?? myMonthlyDue));
     setUploadOpen(true);
+  };
+
+  // ── Status label helper — plain English ──
+  const statusLabel = (s) => {
+    if (!s) return null;
+    const map = { Due: "Pay now", Not_Due: "Coming up", Overdue: "Overdue!", Paid: "Submitted", Approved: "Paid ✓", Rejected: "Rejected" };
+    return map[s.status] || s.status;
+  };
+  const statusColor = (s) => {
+    if (!s) return "var(--muted)";
+    const map = { Due: "#d97706", Not_Due: "var(--muted)", Overdue: "#dc2626", Paid: "#2563eb", Approved: "#16a34a", Rejected: "#dc2626" };
+    return map[s.status] || "var(--muted)";
+  };
+  const statusBg = (s) => {
+    if (!s) return "transparent";
+    const map = { Due: "#fef3c7", Not_Due: "transparent", Overdue: "#fee2e2", Paid: "#eff6ff", Approved: "#f0fdf4", Rejected: "#fee2e2" };
+    return map[s.status] || "transparent";
   };
 
   return (
@@ -108,13 +126,13 @@ export default function GroupDetail() {
       <main className="page-main">
         <button onClick={()=>nav(-1)} className="text-sm mb-4 inline-flex items-center gap-1" style={{color:"var(--muted)"}} data-testid="back-btn">← Back</button>
 
-        {/* Bank details warning */}
+        {/* Bank warning */}
         {!isAdmin && !bankSet && (
           <div className="mb-4 sm:mb-6 px-4 py-3 rounded-xl flex items-start gap-3" style={{background:"#fef3c7",border:"1px solid #fcd34d"}}>
             <AlertTriangle size={18} className="shrink-0 mt-0.5" style={{color:"#92400e"}}/>
             <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm" style={{color:"#92400e"}}>Bank details missing</div>
-              <div className="text-xs mt-0.5" style={{color:"#78350f"}}>Your bank account isn't set. The admin can't process your payout without it.</div>
+              <div className="font-semibold text-sm" style={{color:"#92400e"}}>Add your bank details</div>
+              <div className="text-xs mt-0.5" style={{color:"#78350f"}}>Your bank account isn't set — the admin can't pay you out without it.</div>
             </div>
             <a href="/profile" className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg inline-flex items-center gap-1" style={{background:"#92400e",color:"#fff"}}>
               Add now <ArrowRight size={11}/>
@@ -122,58 +140,59 @@ export default function GroupDetail() {
           </div>
         )}
 
-        {/* Header — stacks vertically on mobile */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6 sm:mb-8">
-          <div className="min-w-0">
-            <div className="label-eyebrow">{group.frequency} · {group.total_cycles} cycles</div>
-            <h1 className="font-display text-2xl sm:text-4xl mt-1">{group.name}</h1>
-            {group.description && <p className="text-sm mt-2" style={{color:"var(--muted)"}}>{group.description}</p>}
-          </div>
-          <div className="card-tactile p-4 sm:p-5 flex sm:flex-col gap-4 sm:gap-0 sm:min-w-[200px] items-center sm:items-start">
-            <div>
-              <div className="label-eyebrow">Contribution</div>
-              <div className="font-display text-2xl sm:text-3xl mt-0.5">{fmtMoney(group.contribution_amount)}</div>
-            </div>
-            <div className="text-xs sm:mt-2" style={{color:"var(--muted)"}}>Due day {group.due_day} · {group.due_time}</div>
-          </div>
+        {/* Group header */}
+        <div className="mb-6 sm:mb-8">
+          <div className="label-eyebrow">{group.frequency} · {group.total_cycles} months</div>
+          <h1 className="font-display text-2xl sm:text-4xl mt-1">{group.name}</h1>
+          {group.description && <p className="text-sm mt-2" style={{color:"var(--muted)"}}>{group.description}</p>}
         </div>
 
-        {/* ── My Ajo at a glance (members only) ── */}
+        {/* ── My Summary (members only) ── */}
         {!isAdmin && mySlots.length > 0 && (
           <div className="card-tactile p-4 sm:p-5 mb-4 sm:mb-6">
-            <div className="label-eyebrow mb-3 flex items-center gap-1.5"><Star size={12}/> My Ajo at a glance</div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="label-eyebrow mb-3 flex items-center gap-1.5"><Star size={12}/> My Ajo summary</div>
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <div className="text-xs" style={{color:"var(--muted)"}}>My slot{mySlots.length>1?"s":""}</div>
-                <div className="font-display text-lg mt-0.5">{mySlots.map(s=>`#${s.payout_position}`).join(", ")}</div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>I pay every month</div>
+                <div className="font-display text-2xl mt-0.5">{fmtMoney(myMonthlyDue)}</div>
+                {mySlots.length > 1 && (
+                  <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{mySlots.length} slots × {fmtMoney(group.contribution_amount)}</div>
+                )}
               </div>
               <div>
-                <div className="text-xs" style={{color:"var(--muted)"}}>Monthly due</div>
-                <div className="font-display text-lg mt-0.5">{fmtMoney(myMonthlyDue)}</div>
-                {mySlots.length > 1 && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{mySlots.length} slots × {fmtMoney(group.contribution_amount)}</div>}
+                <div className="text-xs" style={{color:"var(--muted)"}}>I receive when it's my turn</div>
+                <div className="font-display text-2xl mt-0.5" style={{color:"var(--primary)"}}>{fmtMoney(myPayoutAmount)}</div>
+                <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{members.length} members × {fmtMoney(group.contribution_amount)}</div>
               </div>
               <div>
-                <div className="text-xs" style={{color:"var(--muted)"}}>Payout per slot</div>
-                <div className="font-display text-lg mt-0.5" style={{color:"var(--primary)"}}>{fmtMoney(expectedPayoutPerSlot)}</div>
-                <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{totalSlots} slots × {fmtMoney(group.contribution_amount)}</div>
-              </div>
-              <div>
-                <div className="text-xs" style={{color:"var(--muted)"}}>My payout month{myPayoutCycles.length>1?"s":""}</div>
-                <div className="font-display text-sm mt-0.5">
-                  {myPayoutCycles.length > 0
-                    ? myPayoutCycles.map(c => fmtDate(c.due_date)).join(", ")
-                    : <span style={{color:"var(--muted)"}}>Not assigned yet</span>}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs" style={{color:"var(--muted)"}}>Bank for payout</div>
-                {bankSet ? (
-                  <div className="text-sm mt-0.5 font-medium flex items-center gap-1" style={{color:"#16a34a"}}>
-                    <Landmark size={13}/> {user.bank_name}
-                    <a href="/profile" className="text-xs ml-1 opacity-60 hover:opacity-100" style={{color:"var(--muted)"}}>(edit)</a>
+                <div className="text-xs" style={{color:"var(--muted)"}}>My payout {myPayoutCycles.length > 1 ? "months" : "month"}</div>
+                {myPayoutCycles.length > 0 ? (
+                  <div className="mt-1 flex flex-col gap-1">
+                    {myPayoutCycles.map(c => (
+                      <div key={c.cycle_no} className="inline-flex items-center gap-1.5 text-sm font-semibold px-2.5 py-1 rounded-lg w-fit" style={{background:"var(--primary)15",color:"var(--primary)"}}>
+                        <Gift size={12}/> {fmtDate(c.due_date)} (Month {c.cycle_no})
+                      </div>
+                    ))}
                   </div>
                 ) : (
-                  <a href="/profile" className="mt-0.5 text-xs font-semibold inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg" style={{background:"#92400e15",color:"#92400e"}}>
+                  <div className="text-sm mt-1" style={{color:"var(--muted)"}}>Not assigned yet</div>
+                )}
+              </div>
+              <div>
+                <div className="text-xs" style={{color:"var(--muted)"}}>My slot{mySlots.length > 1 ? "s" : ""}</div>
+                <div className="flex gap-1.5 mt-1 flex-wrap">
+                  {mySlots.map(s => (
+                    <span key={s.payout_position} className="badge s-Payout_Eligible">#{s.payout_position}</span>
+                  ))}
+                </div>
+                <div className="mt-2 text-xs" style={{color:"var(--muted)"}}>Bank for payout</div>
+                {bankSet ? (
+                  <div className="text-sm mt-0.5 font-medium flex items-center gap-1" style={{color:"#16a34a"}}>
+                    <CheckCircle2 size={13}/> {user.bank_name}
+                    <a href="/profile" className="text-xs ml-1 underline" style={{color:"var(--muted)"}}>(edit)</a>
+                  </div>
+                ) : (
+                  <a href="/profile" className="mt-0.5 text-xs font-semibold inline-flex items-center gap-1" style={{color:"#92400e"}}>
                     <ArrowRight size={11}/> Add bank details
                   </a>
                 )}
@@ -182,14 +201,21 @@ export default function GroupDetail() {
           </div>
         )}
 
-        {/* ── Next contribution due ── */}
+        {/* Next payment action strip */}
         {!isAdmin && nextDue && (
-          <div className="mb-4 sm:mb-6 px-4 py-3 rounded-xl flex items-center gap-3" style={{background:"var(--surface)",border:"1px solid var(--border)"}}>
+          <div className="mb-4 sm:mb-6 px-4 py-3 rounded-xl flex items-center gap-3"
+            style={{background: statusBg(statusByCycle[nextDue.cycle_no]), border:"1px solid var(--border)"}}>
             <CalendarClock size={18} className="shrink-0" style={{color:"var(--primary)"}}/>
             <div className="flex-1 min-w-0">
-              <span className="text-sm font-semibold">Next contribution due: </span>
-              <span className="text-sm">Cycle #{nextDue.cycle_no} · {fmtDate(nextDue.due_date)} · {fmtMoney(nextDueAmount)}</span>
-              {mySlots.length > 1 && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{mySlots.length} slots × {fmtMoney(group.contribution_amount)}</div>}
+              <div className="text-sm font-semibold">
+                {statusByCycle[nextDue.cycle_no]?.status === "Overdue" ? "⚠️ Overdue payment" : "Next payment due"}
+              </div>
+              <div className="text-sm mt-0.5">
+                Month {nextDue.cycle_no} · {fmtDate(nextDue.due_date)} · <strong>{fmtMoney(nextDueAmount)}</strong>
+              </div>
+              {mySlots.length > 1 && (
+                <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{mySlots.length} slots × {fmtMoney(group.contribution_amount)}</div>
+              )}
             </div>
             <button onClick={()=>openUpload(nextDue)} className="shrink-0 btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1">
               <Upload size={11}/> Pay now
@@ -206,7 +232,7 @@ export default function GroupDetail() {
 
         {group.payment_account_details && (
           <div className="card-tactile p-4 sm:p-5 mb-4 sm:mb-6">
-            <div className="label-eyebrow mb-1">Payment account details</div>
+            <div className="label-eyebrow mb-1">Where to pay</div>
             <pre className="text-sm whitespace-pre-wrap font-sans">{group.payment_account_details}</pre>
           </div>
         )}
@@ -218,146 +244,139 @@ export default function GroupDetail() {
               <div className="font-display text-base sm:text-lg">{group.whatsapp_group_name || "WhatsApp Group"}</div>
             </div>
             <a href={group.whatsapp_invite_link} target="_blank" rel="noreferrer"
-              className="btn-primary text-sm shrink-0 !py-2.5 !px-4" data-testid="whatsapp-join">
-              Join
-            </a>
+              className="btn-primary text-sm shrink-0 !py-2.5 !px-4" data-testid="whatsapp-join">Join</a>
           </div>
         )}
 
+        {/* ── Monthly payment schedule ── */}
         <section className="mb-8 sm:mb-10">
-          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">Cycles &amp; status</h2>
-          <div className="card-tactile overflow-hidden">
-            {/* Mobile cycle cards */}
-            <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}} data-testid="cycles-table">
-              {cycles.map(c => {
-                const s = statusByCycle[c.cycle_no];
-                const canUpload = !isAdmin && s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due");
-                const isMyPayout = !isAdmin && c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no);
-                return (
-                  <div key={c.id} className="p-4" style={isMyPayout ? {background:"var(--primary)08",borderLeft:"3px solid var(--primary)"} : {}}>
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <div>
-                        <div className="font-semibold text-sm flex items-center gap-1.5">
-                          Cycle #{c.cycle_no}
-                          {isMyPayout && <span className="text-xs px-1.5 py-0.5 rounded font-semibold" style={{background:"var(--primary)",color:"#fff"}}>My payout</span>}
-                        </div>
-                        <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{fmtDate(c.due_date)} · {fmtMoney(c.expected_amount)}</div>
-                        {c.payout_user_name && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>Payout: {c.payout_user_name}</div>}
-                      </div>
-                      <div className="shrink-0">
-                        {isAdmin
-                          ? <span className={`badge ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
-                          : s ? <StatusBadge status={s.status} /> : null}
-                      </div>
-                    </div>
-                    {canUpload && (
-                      <button onClick={()=>openUpload(c)} className="btn-primary w-full text-sm !py-2.5 inline-flex items-center justify-center gap-1.5 mt-1" data-testid={`upload-cycle-${c.cycle_no}`}>
-                        <Upload size={14}/> Upload payment proof
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {/* Desktop table */}
-            <table className="desktop-table w-full text-sm">
-              <thead className="bg-white/50">
-                <tr className="text-left">
-                  <th className="px-4 py-3 label-eyebrow">#</th>
-                  <th className="px-4 py-3 label-eyebrow">Due date</th>
-                  <th className="px-4 py-3 label-eyebrow text-right">Expected</th>
-                  <th className="px-4 py-3 label-eyebrow">Payout to</th>
-                  <th className="px-4 py-3 label-eyebrow">{isAdmin ? "Payout status" : "My status"}</th>
-                  <th className="px-4 py-3 label-eyebrow text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
+          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">
+            {isAdmin ? "Cycles & payout status" : "My monthly payments"}
+          </h2>
+          <div className="card-tactile overflow-hidden" data-testid="cycles-table">
+            {/* MEMBER VIEW — friendly card list */}
+            {!isAdmin && (
+              <div className="divide-y" style={{borderColor:"var(--border)"}}>
                 {cycles.map(c => {
                   const s = statusByCycle[c.cycle_no];
-                  const canUpload = !isAdmin && s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due");
-                  const isMyPayout = !isAdmin && c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no);
+                  const isMyPayout = c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no);
+                  const canUpload = s && (s.status === "Due" || s.status === "Rejected" || s.status === "Not_Due" || s.status === "Overdue");
+                  // Member's personal amount for this cycle
+                  const myAmount = s?.expected_amount ?? myMonthlyDue;
                   return (
-                    <tr key={c.id} className="border-t" style={{borderColor:"var(--border)", background: isMyPayout ? "var(--primary)08" : ""}}>
-                      <td className="px-4 py-3 font-display">
-                        {c.cycle_no}
-                        {isMyPayout && <span className="ml-2 text-xs px-1.5 py-0.5 rounded font-semibold" style={{background:"var(--primary)",color:"#fff"}}>Mine</span>}
-                      </td>
-                      <td className="px-4 py-3">{fmtDate(c.due_date)}</td>
-                      <td className="px-4 py-3 text-right font-display">{fmtMoney(c.expected_amount)}</td>
-                      <td className="px-4 py-3">{c.payout_user_name || <span style={{color:"var(--muted)"}}>—</span>}</td>
-                      <td className="px-4 py-3">
-                        {isAdmin ? (
-                          <span className={`badge ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
-                        ) : s ? <StatusBadge status={s.status} /> : <span style={{color:"var(--muted)"}}>—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {canUpload && (
-                          <button onClick={()=>openUpload(c)} className="btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1" data-testid={`upload-cycle-${c.cycle_no}`}>
-                            <Upload size={12}/> Upload proof
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                    <div key={c.id} className="p-4"
+                      style={isMyPayout
+                        ? {background:"#f0fdf4", borderLeft:"3px solid #16a34a"}
+                        : s?.status === "Overdue" ? {background:"#fff7f7"} : {}}>
+                      {isMyPayout && (
+                        <div className="flex items-center gap-1.5 text-xs font-bold mb-2" style={{color:"#16a34a"}}>
+                          <Gift size={12}/> This is your payout month!
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-sm">Month {c.cycle_no} — {fmtDate(c.due_date)}</div>
+                          {s && (
+                            <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>
+                              You owe: <strong>{fmtMoney(myAmount)}</strong>
+                              {mySlots.length > 1 && ` (${mySlots.length} slots × ${fmtMoney(group.contribution_amount)})`}
+                            </div>
+                          )}
+                          {isMyPayout && (
+                            <div className="text-xs mt-0.5" style={{color:"#16a34a"}}>
+                              You'll receive: {fmtMoney(myPayoutAmount)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="shrink-0 flex flex-col items-end gap-1.5">
+                          {s ? (
+                            <span className="text-xs font-semibold px-2 py-1 rounded-full"
+                              style={{background: statusBg(s), color: statusColor(s), border:`1px solid ${statusColor(s)}30`}}>
+                              {statusLabel(s)}
+                            </span>
+                          ) : (
+                            <span className="text-xs" style={{color:"var(--muted)"}}>—</span>
+                          )}
+                        </div>
+                      </div>
+                      {canUpload && (
+                        <button onClick={()=>openUpload(c)}
+                          className="btn-primary w-full text-sm !py-2.5 inline-flex items-center justify-center gap-1.5 mt-3"
+                          data-testid={`upload-cycle-${c.cycle_no}`}>
+                          <Upload size={14}/> Upload payment proof for Month {c.cycle_no}
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
-              </tbody>
-            </table>
+              </div>
+            )}
+
+            {/* ADMIN VIEW — full table */}
+            {isAdmin && (
+              <table className="w-full text-sm">
+                <thead className="bg-white/50">
+                  <tr className="text-left">
+                    <th className="px-4 py-3 label-eyebrow">Month</th>
+                    <th className="px-4 py-3 label-eyebrow">Due date</th>
+                    <th className="px-4 py-3 label-eyebrow">Payout to</th>
+                    <th className="px-4 py-3 label-eyebrow">Payout status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cycles.map(c => (
+                    <tr key={c.id} className="border-t" style={{borderColor:"var(--border)"}}>
+                      <td className="px-4 py-3 font-display">#{c.cycle_no}</td>
+                      <td className="px-4 py-3">{fmtDate(c.due_date)}</td>
+                      <td className="px-4 py-3">{c.payout_user_name || <span style={{color:"var(--muted)"}}>—</span>}</td>
+                      <td className="px-4 py-3">
+                        <span className={`badge ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </section>
 
+        {/* ── Members ── */}
         <section>
-          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">Group members ({members.length}/{group.member_limit})</h2>
+          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">
+            Group members ({membersByUser.length} {membersByUser.length === 1 ? "member" : "members"}, {members.length} slots)
+          </h2>
           <div className="card-tactile overflow-hidden">
-            {/* Mobile member cards */}
-            <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
-              {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
-                const payoutCycle = cycles.find(c => c.payout_user_id === m.user_id && c.cycle_no === m.payout_position);
+            <div className="divide-y" style={{borderColor:"var(--border)"}}>
+              {membersByUser.map(m => {
                 const isMe = m.user_id === user.id;
+                const payoutDates = m.slots.map(pos => {
+                  const c = cycles.find(cy => cy.payout_user_id === m.user_id && cy.cycle_no === pos);
+                  return c ? fmtDate(c.due_date) : null;
+                }).filter(Boolean);
                 return (
-                  <div key={m.id} className="px-4 py-3 flex items-center justify-between gap-3" style={isMe ? {background:"var(--primary)06"} : {}}>
+                  <div key={m.user_id} className="px-4 py-3 flex items-center justify-between gap-3"
+                    style={isMe ? {background:"var(--primary)06"} : {}}>
                     <div className="min-w-0">
                       <div className="text-sm font-semibold truncate flex items-center gap-1.5">
                         {m.display_name || m.user_name}
                         {isMe && <span className="text-xs px-1.5 py-0.5 rounded" style={{background:"var(--primary)15",color:"var(--primary)"}}>You</span>}
                       </div>
-                      {isAdmin && <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>}
-                      {payoutCycle && <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>Payout: {fmtDate(payoutCycle.due_date)}</div>}
+                      {isAdmin && <div className="text-xs" style={{color:"var(--muted)"}}>{m.user_email}</div>}
+                      {payoutDates.length > 0 && (
+                        <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>
+                          Payout{payoutDates.length > 1 ? "s" : ""}: {payoutDates.join(" & ")}
+                        </div>
+                      )}
                     </div>
-                    <span className="badge s-Payout_Eligible shrink-0">#{m.payout_position}</span>
+                    <div className="flex gap-1 flex-wrap justify-end shrink-0">
+                      {m.slots.map(pos => (
+                        <span key={pos} className="badge s-Payout_Eligible">#{pos}</span>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
             </div>
-            {/* Desktop table */}
-            <table className="desktop-table w-full text-sm">
-              <thead className="bg-white/50">
-                <tr className="text-left">
-                  <th className="px-4 py-3 label-eyebrow">Slot</th>
-                  <th className="px-4 py-3 label-eyebrow">Member</th>
-                  {isAdmin && <th className="px-4 py-3 label-eyebrow">Email</th>}
-                  <th className="px-4 py-3 label-eyebrow">Payout month</th>
-                  <th className="px-4 py-3 label-eyebrow">Joined</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...members].sort((a,b)=>a.payout_position-b.payout_position).map(m => {
-                  const payoutCycle = cycles.find(c => c.payout_user_id === m.user_id && c.cycle_no === m.payout_position);
-                  const isMe = m.user_id === user.id;
-                  return (
-                    <tr key={m.id} className="border-t" style={{borderColor:"var(--border)", background: isMe ? "var(--primary)06" : ""}}>
-                      <td className="px-4 py-3 font-display">#{m.payout_position}</td>
-                      <td className="px-4 py-3 font-medium">
-                        {m.display_name || m.user_name}
-                        {isMe && <span className="ml-2 text-xs px-1.5 py-0.5 rounded" style={{background:"var(--primary)15",color:"var(--primary)"}}>You</span>}
-                      </td>
-                      {isAdmin && <td className="px-4 py-3" style={{color:"var(--muted)"}}>{m.user_email}</td>}
-                      <td className="px-4 py-3" style={{color:"var(--muted)"}}>{payoutCycle ? fmtDate(payoutCycle.due_date) : <span style={{color:"var(--muted)"}}>—</span>}</td>
-                      <td className="px-4 py-3" style={{color:"var(--muted)"}}>{fmtDate(m.joined_at)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
         </section>
 
@@ -367,36 +386,32 @@ export default function GroupDetail() {
           </section>
         )}
 
-        {/* Floating message-admin button (members only) */}
         {!isAdmin && (
-          <button
-            onClick={() => setMsgOpen(true)}
+          <button onClick={() => setMsgOpen(true)}
             className="fixed bottom-6 right-5 z-40 w-14 h-14 rounded-full shadow-lg flex items-center justify-center"
-            style={{background:"var(--primary)",color:"#fff"}}
-            title="Message admin"
-            data-testid="msg-admin-fab">
+            style={{background:"var(--primary)",color:"#fff"}} title="Message admin" data-testid="msg-admin-fab">
             <MessageCircle size={22}/>
           </button>
         )}
       </main>
 
-      {/* Upload modal — full screen slide-up on mobile */}
+      {/* Upload modal */}
       {uploadOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onClick={()=>setUploadOpen(false)}>
           <form onClick={e=>e.stopPropagation()} onSubmit={submitUpload}
             className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-xl p-5 sm:p-6 max-h-[90vh] overflow-y-auto"
             data-testid="upload-modal">
             <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4 sm:hidden" />
-            <h3 className="font-display text-xl mb-4">Upload proof — Cycle #{uploadCycle}</h3>
+            <h3 className="font-display text-xl mb-1">Upload payment proof</h3>
+            <p className="text-sm mb-4" style={{color:"var(--muted)"}}>Month {uploadCycle} — amount due: <strong>{fmtMoney(Number(uploadAmount))}</strong></p>
             <div className="space-y-4">
               <div>
-                <label className="form-label">Amount (₦)</label>
+                <label className="form-label">Amount paid (₦)</label>
                 <input type="number" required value={uploadAmount} onChange={e=>setUploadAmount(e.target.value)} className="form-input" data-testid="upload-amount" />
               </div>
               <div>
-                <label className="form-label">Receipt (image or PDF)</label>
-                <input type="file" accept="image/*,application/pdf" required onChange={e=>setUploadFile(e.target.files[0])}
-                  className="w-full text-sm" data-testid="upload-file" />
+                <label className="form-label">Receipt (photo or PDF)</label>
+                <input type="file" accept="image/*,application/pdf" required onChange={e=>setUploadFile(e.target.files[0])} className="w-full text-sm" data-testid="upload-file" />
               </div>
               <div>
                 <label className="form-label">Note (optional)</label>
