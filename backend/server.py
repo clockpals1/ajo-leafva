@@ -513,11 +513,17 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
         "status": "active",
     }
     await db.group_members.insert_one(gm.copy())
-    # create cycle status records
+    # create cycle status records (skip cycles where the user already has a record)
     cycles = await db.cycles.find({"group_id": group_id}).to_list(1000)
+    existing_status_nos = {
+        s["cycle_no"] for s in
+        await db.member_cycle_status.find({"group_id": group_id, "user_id": user["id"]}, {"cycle_no": 1}).to_list(1000)
+    }
     today = now_utc().date()
     docs = []
     for c in cycles:
+        if c["cycle_no"] in existing_status_nos:
+            continue
         due = date.fromisoformat(c["due_date"])
         status_val = "Due" if due <= today else "Not_Due"
         docs.append({
