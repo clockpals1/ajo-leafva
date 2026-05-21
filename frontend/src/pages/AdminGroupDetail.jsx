@@ -68,6 +68,7 @@ export default function AdminGroupDetail() {
   const [addSlotPos, setAddSlotPos] = useState("");
   const [addSlotErr, setAddSlotErr] = useState("");
   const [editingDueDate, setEditingDueDate] = useState({}); // { cycle_id: draft_date }
+  const [reconciling, setReconciling] = useState(false);
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -123,6 +124,17 @@ export default function AdminGroupDetail() {
   const groupedMembers = Object.values(membersByUser).sort((a,b)=>a.slots[0].payout_position-b.slots[0].payout_position);
 
   const copyText = (text) => navigator.clipboard?.writeText(text);
+
+  const runReconcile = async () => {
+    if (!window.confirm("This will clear stale payout assignments from cycles where the slot no longer exists. Continue?")) return;
+    setReconciling(true);
+    try {
+      const r = await api.post("/admin/reconcile-cycle-payouts");
+      alert(`Done. ${r.data.cycles_cleared} stale assignment${r.data.cycles_cleared !== 1 ? "s" : ""} cleared.`);
+      load();
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setReconciling(false); }
+  };
 
   const addMember = async (e) => {
     e.preventDefault(); setErr("");
@@ -514,10 +526,19 @@ export default function AdminGroupDetail() {
 
         {tab === "payouts" && (
           <div className="card-tactile overflow-hidden" data-testid="payouts-table">
+            <div className="px-4 py-3 flex items-center justify-between gap-3 border-b" style={{borderColor:"var(--border)"}}>
+              <div className="text-xs" style={{color:"var(--muted)"}}>Each row is one monthly cycle. Recipient is the member with a slot at that position.</div>
+              <button onClick={runReconcile} disabled={reconciling}
+                className="text-xs px-3 py-1.5 rounded-lg font-semibold shrink-0 inline-flex items-center gap-1"
+                style={{background:"var(--surface)",border:"1px solid var(--border)",color:"var(--muted)"}}>
+                {reconciling ? "Fixing…" : "Fix stale assignments"}
+              </button>
+            </div>
             {/* Mobile payout cards */}
             <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
               {cycles.map(c => {
-                const recipient = members.find(m=>m.user_id===c.payout_user_id);
+                // Validate: recipient must have a slot at exactly this cycle_no (position)
+                const recipient = members.find(m => m.user_id === c.payout_user_id && m.payout_position === c.cycle_no);
                 const recUser = userMap[c.payout_user_id];
                 const bankStr = recUser?.bank_account_number
                   ? `${recUser.bank_name} — ${recUser.bank_account_number} (${recUser.bank_account_name})`
@@ -573,8 +594,9 @@ export default function AdminGroupDetail() {
               </tr></thead>
               <tbody>
                 {cycles.map(c => {
-                  const recipient = members.find(m=>m.user_id===c.payout_user_id);
-                  const recUser = userMap[c.payout_user_id];
+                  // Validate: recipient must have a slot at exactly this cycle_no (position)
+                  const recipient = members.find(m => m.user_id === c.payout_user_id && m.payout_position === c.cycle_no);
+                  const recUser = recipient ? userMap[c.payout_user_id] : null;
                   const bankStr = recUser?.bank_account_number
                     ? `${recUser.bank_name} — ${recUser.bank_account_number} (${recUser.bank_account_name})`
                     : null;

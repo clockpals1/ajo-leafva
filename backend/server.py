@@ -595,6 +595,22 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
         update["payout_position"] = data.payout_position
     if not update:
         return {"ok": True, "changed": 0}
+    old_position = gm.get("payout_position")
+    new_position = update.get("payout_position")
+    if new_position and new_position != old_position:
+        # Guard: new position must not be taken by someone else
+        conflict = await db.group_members.find_one({"group_id": group_id, "payout_position": new_position})
+        if conflict and conflict["id"] != member_id:
+            raise HTTPException(400, f"Payout position {new_position} is already taken by another member.")
+        # Clear old cycle assignment (unless already paid out)
+        await db.cycles.update_one(
+            {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
+            {"$set": {"payout_user_id": None}}
+        )
+        # Assign new cycle to this user (only if unoccupied)
+        new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": new_position})
+        if new_cycle and not new_cycle.get("payout_user_id"):
+            await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": gm["user_id"]}})
     await db.group_members.update_one({"id": member_id}, {"$set": update})
     await log_audit(admin["id"], "member_updated", target=group_id,
                     meta={"member_id": member_id, "changes": update})
@@ -608,6 +624,11 @@ async def remove_member(group_id: str, member_id: str, reason: Optional[str] = N
     res = await db.group_members.delete_one({"id": member_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Member not found")
+    # Clear this slot's payout assignment from the cycle (only if payout not yet completed)
+    await db.cycles.update_one(
+        {"group_id": group_id, "cycle_no": gm["payout_position"], "payout_status": {"$ne": "completed"}},
+        {"$set": {"payout_user_id": None}}
+    )
     # Recalculate cycle obligations after slot removal
     remaining_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": gm["user_id"]})
     if remaining_slots == 0:
@@ -866,6 +887,38 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
     else:
         my_status = await db.member_cycle_status.find({"group_id": group_id, "user_id": user["id"]}, {"_id": 0}).to_list(1000)
     return {"group": g, "cycles": cycles, "members": members, "statuses": my_status}
+
+# ---------------- RECONCILE CYCLE PAYOUTS ----------------
+@api.post("/admin/reconcile-cycle-payouts")
+async def reconcile_cycle_payouts(admin=Depends(require_admin)):
+    """
+    Fix stale payout_user_id assignments in cycles.
+    A cycle's payout_user_id must match a group_member record where
+    user_id = payout_user_id AND payout_position = cycle_no.
+    Any mismatch (e.g. from previously removed or repositioned slots)
+    is cleared to None — unless payout_status = 'completed'.
+    Returns a summary of changes made.
+    """
+    groups = await db.groups.find({}, {"_id": 0, "id": 1}).to_list(1000)
+    total_cleared = 0
+    for g in groups:
+        gid = g["id"]
+        cycles_list = await db.cycles.find(
+            {"group_id": gid, "payout_user_id": {"$ne": None}, "payout_status": {"$ne": "completed"}},
+            {"_id": 0, "id": 1, "cycle_no": 1, "payout_user_id": 1}
+        ).to_list(1000)
+        for c in cycles_list:
+            # Valid assignment: there must be a group_member with this user AND this position
+            valid = await db.group_members.find_one({
+                "group_id": gid,
+                "user_id": c["payout_user_id"],
+                "payout_position": c["cycle_no"]
+            })
+            if not valid:
+                await db.cycles.update_one({"id": c["id"]}, {"$set": {"payout_user_id": None}})
+                total_cleared += 1
+    await log_audit(admin["id"], "reconcile_cycle_payouts", meta={"cleared": total_cleared})
+    return {"ok": True, "cycles_cleared": total_cleared}
 
 # ---------------- DASHBOARD STATS ----------------
 @api.get("/admin/dashboard-stats")
