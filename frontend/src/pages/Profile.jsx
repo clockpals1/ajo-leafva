@@ -15,13 +15,20 @@ export default function Profile() {
   });
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const submit = async (e) => {
-    e.preventDefault(); setErr(""); setMsg("");
+    e.preventDefault(); setErr(""); setMsg(""); setBusy(true);
     try {
-      const { data } = await api.put("/me/profile", form);
-      setUser(data); setMsg("Profile updated.");
+      // Only send visibility_preference if it actually changed
+      const payload = { ...form };
+      if (payload.visibility_preference === (user?.visibility_preference || "visible")) {
+        delete payload.visibility_preference;
+      }
+      const { data } = await api.put("/me/profile", payload);
+      setUser(data); setMsg("Changes saved!");
     } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -96,7 +103,9 @@ export default function Profile() {
 
           {err && <div className="text-red-700 text-sm px-1" data-testid="profile-error">{err}</div>}
           {msg && <div className="text-sm px-1" style={{color:"var(--primary)"}} data-testid="profile-msg">{msg}</div>}
-          <button className="btn-primary w-full sm:w-auto" data-testid="profile-save">Save changes</button>
+          <button className="btn-primary w-full sm:w-auto" disabled={busy} data-testid="profile-save">
+            {busy ? "Saving…" : "Save changes"}
+          </button>
         </form>
       </main>
     </div>

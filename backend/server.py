@@ -266,7 +266,8 @@ async def me(user=Depends(get_current_user)):
 @api.put("/me/profile")
 async def update_profile(data: ProfileUpdate, user=Depends(get_current_user)):
     update = {k: v for k, v in data.model_dump().items() if v is not None}
-    if "visibility_preference" in update:
+    current_pref = user.get("visibility_preference", "visible")
+    if "visibility_preference" in update and update["visibility_preference"] != current_pref:
         # Visibility change requires admin approval
         await db.visibility_requests.insert_one({
             "id": str(uuid.uuid4()),

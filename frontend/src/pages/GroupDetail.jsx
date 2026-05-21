@@ -343,7 +343,7 @@ export default function GroupDetail() {
         {/* ── Members ── */}
         <section>
           <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">
-            Group members ({membersByUser.length} {membersByUser.length === 1 ? "member" : "members"}, {members.length} slots)
+            Group members ({membersByUser.length} {membersByUser.length === 1 ? "member" : "members"})
           </h2>
           <div className="card-tactile overflow-hidden">
             <div className="divide-y" style={{borderColor:"var(--border)"}}>
@@ -362,17 +362,21 @@ export default function GroupDetail() {
                         {isMe && <span className="text-xs px-1.5 py-0.5 rounded" style={{background:"var(--primary)15",color:"var(--primary)"}}>You</span>}
                       </div>
                       {isAdmin && <div className="text-xs" style={{color:"var(--muted)"}}>{m.user_email}</div>}
-                      {payoutDates.length > 0 && (
+                      {/* Only show payout dates to admin or the member themselves */}
+                      {(isAdmin || isMe) && payoutDates.length > 0 && (
                         <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>
                           Payout{payoutDates.length > 1 ? "s" : ""}: {payoutDates.join(" & ")}
                         </div>
                       )}
                     </div>
-                    <div className="flex gap-1 flex-wrap justify-end shrink-0">
-                      {m.slots.map(pos => (
-                        <span key={pos} className="badge s-Payout_Eligible">#{pos}</span>
-                      ))}
-                    </div>
+                    {/* Only show slot badges to admin or the member themselves */}
+                    {(isAdmin || isMe) && (
+                      <div className="flex gap-1 flex-wrap justify-end shrink-0">
+                        {m.slots.map(pos => (
+                          <span key={pos} className="badge s-Payout_Eligible">#{pos}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
