@@ -622,6 +622,14 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
             old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": old_position})
             if old_cycle and old_cycle.get("payout_status") != "completed":
                 await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
+            # Recalculate expected_amount for the swapped member (in case they have multiple slots)
+            conflict_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": conflict["user_id"]})
+            grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
+            per_cycle_due = grp["contribution_amount"] * conflict_slots
+            await db.member_cycle_status.update_many(
+                {"group_id": group_id, "user_id": conflict["user_id"]},
+                {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+            )
         # Clear old cycle assignment for this member (unless already paid out)
         await db.cycles.update_one(
             {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
@@ -631,6 +639,14 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
         new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": new_position})
         if new_cycle and new_cycle.get("payout_status") != "completed":
             await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": gm["user_id"]}})
+        # Recalculate expected_amount for this member (in case they have multiple slots)
+        my_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": gm["user_id"]})
+        grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
+        per_cycle_due = grp["contribution_amount"] * my_slots
+        await db.member_cycle_status.update_many(
+            {"group_id": group_id, "user_id": gm["user_id"]},
+            {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+        )
     await db.group_members.update_one({"id": member_id}, {"$set": update})
     await log_audit(admin["id"], "member_updated", target=group_id,
                     meta={"member_id": member_id, "changes": update})
