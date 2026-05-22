@@ -5,6 +5,7 @@ import TopNav from "../components/TopNav";
 import {
   Plus, Users, UserCheck, Clock, AlertTriangle, TrendingUp,
   Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X, Trash2, Pencil, KeyRound,
+  Sparkles, Loader2, Wand2,
 } from "lucide-react";
 
 const ACTION_COLORS = {
@@ -46,6 +47,11 @@ export default function AdminDashboard() {
   const [broadBody, setBroadBody] = useState("");
   const [broadMsg, setBroadMsg] = useState("");
 
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiMode, setAiMode] = useState(false);
+
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [addUserForm, setAddUserForm] = useState({ name: "", email: "", phone: "", group_id: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
   const [addUserErr, setAddUserErr] = useState("");
@@ -68,6 +74,31 @@ export default function AdminDashboard() {
     setStats(s); setGroups(g); setPending(p); setUsers(u); setAudit(a);
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const runAiGenerate = async () => {
+    if (!aiPrompt.trim()) return;
+    setAiLoading(true); setAiError("");
+    try {
+      const { data } = await api.post("/admin/ai/generate-group", { prompt: aiPrompt });
+      const g = data.group;
+      setForm(prev => ({
+        ...prev,
+        name: g.name || prev.name,
+        description: g.description || prev.description,
+        contribution_amount: g.contribution_amount || prev.contribution_amount,
+        frequency: g.frequency || prev.frequency,
+        start_date: g.start_date || prev.start_date,
+        total_cycles: g.total_cycles || prev.total_cycles,
+        member_limit: g.member_limit || prev.member_limit,
+        due_day: g.due_day || prev.due_day,
+        rules_text: g.rules_text || prev.rules_text,
+        payment_account_details: g.payment_account_details || prev.payment_account_details,
+      }));
+      setAiMode(false);
+    } catch (e) {
+      setAiError(e?.response?.data?.detail || "AI failed — check your Groq key in Settings.");
+    } finally { setAiLoading(false); }
+  };
 
   const submitCreate = async (e) => {
     e.preventDefault(); setCreateErr("");
@@ -825,6 +856,13 @@ export default function AdminDashboard() {
                 <h3 className="font-display text-xl">Create Ajo Group</h3>
                 <p className="text-xs mt-0.5" style={{color:"var(--muted)"}}>You can invite members after creation.</p>
               </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button type="button" onClick={()=>{setAiMode(!aiMode);setAiError("");}} 
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors"
+                  style={aiMode ? {background:"var(--primary)",color:"#fff",borderColor:"var(--primary)"} : {borderColor:"var(--border)",color:"var(--primary)"}}>
+                  <Sparkles size={12}/> {aiMode ? "Manual" : "Use AI"}
+                </button>
+              </div>
               <button type="button" onClick={()=>setCreateOpen(false)}
                 className="p-2 rounded-lg hover:bg-gray-100 -mt-1 -mr-1 flex-shrink-0">
                 <X size={18}/>
@@ -833,6 +871,26 @@ export default function AdminDashboard() {
 
             {/* Scrollable body */}
             <div className="overflow-y-auto flex-1 px-5 py-5 space-y-6">
+
+              {/* AI prompt panel */}
+              {aiMode && (
+                <div className="rounded-xl p-4 space-y-3" style={{background:"var(--primary)08",border:"1px solid var(--primary)30"}}>
+                  <div className="flex items-center gap-2 text-sm font-semibold" style={{color:"var(--primary)"}}>
+                    <Sparkles size={14}/> AI Group Creator
+                  </div>
+                  <p className="text-xs" style={{color:"var(--muted)"}}>Describe the group in plain English — AI will fill in all the fields for you to review and confirm.</p>
+                  <textarea
+                    value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)}
+                    rows={3} className="form-input text-sm w-full"
+                    placeholder='e.g. "Create a 12-person monthly Ajo group starting July 2026, contribution ₦50,000, Lagos professionals theme"'
+                  />
+                  {aiError && <p className="text-xs text-red-600">{aiError}</p>}
+                  <button type="button" disabled={aiLoading || !aiPrompt.trim()} onClick={runAiGenerate}
+                    className="btn-primary text-sm inline-flex items-center gap-2">
+                    {aiLoading ? <><Loader2 size={14} className="animate-spin"/>Generating…</> : <><Wand2 size={14}/>Generate group details</>}
+                  </button>
+                </div>
+              )}
 
               {/* Section: Basic Info */}
               <div>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
-import api, { formatErr } from "../api";
+import api, { formatErr, fmtMoney } from "../api";
 import TopNav from "../components/TopNav";
+import { Sparkles, Send, Users, Loader2, CheckCircle2, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 
 export default function AdminSettings() {
   const [s, setS] = useState(null);
@@ -21,12 +22,34 @@ export default function AdminSettings() {
       smtp_host: data.smtp_host, smtp_port: String(data.smtp_port || 587),
       smtp_user: data.smtp_user, smtp_password: "",
       smtp_from: data.smtp_from, smtp_secure: data.smtp_secure || false,
+      groq_api_key: "", groq_model: data.groq_model || "llama-3.3-70b-versatile",
     });
   };
   useEffect(() => { load(); }, []);
 
   const [testEmailMsg, setTestEmailMsg] = useState("");
   const [testEmailBusy, setTestEmailBusy] = useState(false);
+
+  const [aiEmailGroup, setAiEmailGroup] = useState("");
+  const [aiEmailType, setAiEmailType] = useState("summary");
+  const [aiEmailBusy, setAiEmailBusy] = useState(false);
+  const [aiEmailResult, setAiEmailResult] = useState(null);
+  const [groups, setGroups] = useState([]);
+
+  useEffect(() => {
+    api.get("/admin/groups").then(r => setGroups(r.data)).catch(() => {});
+  }, []);
+
+  const sendAiEmails = async () => {
+    setAiEmailBusy(true); setAiEmailResult(null);
+    try {
+      const payload = { email_type: aiEmailType };
+      if (aiEmailGroup) payload.group_id = aiEmailGroup;
+      const { data } = await api.post("/admin/ai/send-summary-emails", payload);
+      setAiEmailResult({ ok: true, msg: `✓ Sent to ${data.sent} member${data.sent !== 1 ? "s" : ""}${data.errors?.length ? ` (${data.errors.length} failed)` : ""}` });
+    } catch (e) { setAiEmailResult({ ok: false, msg: formatErr(e?.response?.data?.detail) }); }
+    finally { setAiEmailBusy(false); }
+  };
 
   const save = async (e) => {
     e.preventDefault(); setErr(""); setMsg("");
@@ -136,6 +159,74 @@ export default function AdminSettings() {
             <Field label="Twilio Account SID" value={form.twilio_account_sid} onChange={v=>setForm({...form, twilio_account_sid:v})} testid="setting-twilio-sid" placeholder={s.twilio_account_sid_masked || "ACxxxxxx..."} />
             <Field label="Twilio Auth Token" value={form.twilio_auth_token} onChange={v=>setForm({...form, twilio_auth_token:v})} testid="setting-twilio-token" placeholder={s.twilio_auth_token_masked || "secret token"} />
             <Field label="WhatsApp-enabled from number" value={form.twilio_whatsapp_from||""} onChange={v=>setForm({...form, twilio_whatsapp_from:v})} testid="setting-twilio-from" placeholder="whatsapp:+14155238886" />
+          </Section>
+
+          <Section title={<span className="flex items-center gap-2"><Sparkles size={14} style={{color:"var(--primary)"}}/> AI Assistant — Groq (Open-Source Llama 3)</span>}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`badge ${s.has_groq ? "s-Paid" : "s-Not_Due"}`}>{s.has_groq ? "Active" : "Not configured"}</span>
+              {s.has_groq && <span className="text-xs" style={{color:"var(--muted)"}}>Key: {s.groq_api_key_masked} · Model: {s.groq_model}</span>}
+            </div>
+            {!s.has_groq && (
+              <p className="text-xs text-amber-700 font-medium mb-2">
+                ⚡ Get a free API key at{" "}
+                <a href="https://console.groq.com" target="_blank" rel="noreferrer" className="underline">console.groq.com</a>
+                {" "}— uses open-source Llama 3 models, no credit card needed.
+              </p>
+            )}
+            <Field label="Groq API key (set / replace)" value={form.groq_api_key} onChange={v=>setForm({...form,groq_api_key:v})} placeholder="gsk_... (leave empty to keep current)" />
+            <div>
+              <label className="block text-xs mb-1" style={{color:"var(--muted)"}}>AI model</label>
+              <select value={form.groq_model} onChange={e=>setForm({...form,groq_model:e.target.value})}
+                className="w-full border rounded px-3 py-2 bg-white text-sm">
+                <option value="llama-3.3-70b-versatile">Llama 3.3 70B — Best quality (recommended)</option>
+                <option value="llama-3.1-8b-instant">Llama 3.1 8B — Fastest / lowest latency</option>
+                <option value="gemma2-9b-it">Gemma 2 9B — Google open-source</option>
+                <option value="mixtral-8x7b-32768">Mixtral 8x7B — Long context</option>
+              </select>
+            </div>
+            <p className="text-xs mt-1" style={{color:"var(--muted)"}}>
+              Powers: AI group creation from prompts · Personalised member email summaries · Contribution reminders.
+            </p>
+          </Section>
+
+          <Section title={<span className="flex items-center gap-2"><Send size={14} style={{color:"var(--primary)"}}/> AI Email Bot — Member Summaries &amp; Reminders</span>}>
+            <p className="text-xs mb-3" style={{color:"var(--muted)"}}>
+              Send AI-personalised emails to members with their group summary, slot info, payout details and contribution status.
+              Works without a Groq key — AI enhances the tone when a key is configured.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs mb-1" style={{color:"var(--muted)"}}>Target group</label>
+                <select value={aiEmailGroup} onChange={e=>setAiEmailGroup(e.target.value)}
+                  className="w-full border rounded px-3 py-2 bg-white text-sm">
+                  <option value="">All groups (all members)</option>
+                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs mb-1" style={{color:"var(--muted)"}}>Email type</label>
+                <select value={aiEmailType} onChange={e=>setAiEmailType(e.target.value)}
+                  className="w-full border rounded px-3 py-2 bg-white text-sm">
+                  <option value="summary">📋 Full Ajo Summary</option>
+                  <option value="reminder">⏰ Contribution Reminder</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <button type="button" disabled={aiEmailBusy} onClick={sendAiEmails}
+                className="btn-primary text-sm inline-flex items-center gap-2">
+                {aiEmailBusy ? <><Loader2 size={14} className="animate-spin"/> Sending…</> : <><Send size={14}/> Send emails</>}
+              </button>
+              {aiEmailResult && (
+                <span className="text-sm flex items-center gap-1" style={{color: aiEmailResult.ok ? "var(--primary)" : "#b91c1c"}}>
+                  {aiEmailResult.ok ? <CheckCircle2 size={14}/> : <AlertTriangle size={14}/>}
+                  {aiEmailResult.msg}
+                </span>
+              )}
+            </div>
+            <p className="text-xs mt-2" style={{color:"var(--muted)"}}>
+              Each member receives a personalised email showing: their groups, slot numbers, monthly contributions, payout totals, payout months, and payment status.
+            </p>
           </Section>
 
           {msg && <div className="text-sm" style={{color:"var(--primary)"}} data-testid="settings-msg">{msg}</div>}
