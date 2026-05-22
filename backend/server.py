@@ -613,18 +613,23 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
     old_position = gm.get("payout_position")
     new_position = update.get("payout_position")
     if new_position and new_position != old_position:
-        # Guard: new position must not be taken by someone else
+        # Check if new position is taken by another member
         conflict = await db.group_members.find_one({"group_id": group_id, "payout_position": new_position})
         if conflict and conflict["id"] != member_id:
-            raise HTTPException(400, f"Payout position {new_position} is already taken by another member.")
-        # Clear old cycle assignment (unless already paid out)
+            # Swap positions: move the conflicting member to the old position
+            await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": old_position}})
+            # Update cycle assignments for the swapped member
+            old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": old_position})
+            if old_cycle and old_cycle.get("payout_status") != "completed":
+                await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
+        # Clear old cycle assignment for this member (unless already paid out)
         await db.cycles.update_one(
             {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
             {"$set": {"payout_user_id": None}}
         )
-        # Assign new cycle to this user (only if unoccupied)
+        # Assign new cycle to this user
         new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": new_position})
-        if new_cycle and not new_cycle.get("payout_user_id"):
+        if new_cycle and new_cycle.get("payout_status") != "completed":
             await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": gm["user_id"]}})
     await db.group_members.update_one({"id": member_id}, {"$set": update})
     await log_audit(admin["id"], "member_updated", target=group_id,
