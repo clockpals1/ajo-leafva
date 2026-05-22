@@ -800,7 +800,7 @@ export default function AdminGroupDetail() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="form-label">Due day <span className="font-normal text-xs" style={{color:"var(--muted)"}}>day of month</span></label>
+                  <label className="form-label">Due day <span className="font-normal text-xs" style={{color:"var(--muted)"}}>day of month (1–28)</span></label>
                   <input type="number" min={1} max={28} value={editData.due_day||1} onChange={e=>setField("due_day",Number(e.target.value))} className="form-input"/>
                 </div>
                 <div>
@@ -811,7 +811,9 @@ export default function AdminGroupDetail() {
               <div>
                 <label className="form-label">Group start date</label>
                 <input type="date" value={editData.start_date||""} onChange={e=>setField("start_date",e.target.value)} className="form-input"/>
-                <p className="text-xs mt-1" style={{color:"var(--muted)"}}>Changing start date or due day here only saves the group settings. Use <strong>Recalculate Dates</strong> below to push the change to all pending cycle due dates.</p>
+                <p className="text-xs mt-1 px-2 py-1.5 rounded-lg" style={{color:"#92400e", background:"#fef3c7"}}>
+                  ⚡ Saving any change to <strong>Start date</strong>, <strong>Due day</strong> or <strong>Frequency</strong> will automatically recalculate all pending cycle due dates — member slots &amp; payout months update instantly.
+                </p>
               </div>
             </div>
 
@@ -884,11 +886,11 @@ export default function AdminGroupDetail() {
               <div className="card-tactile p-4 sm:p-6 space-y-3" style={{borderLeft:"3px solid var(--primary)"}}>
                 <div className="flex items-center gap-2">
                   <CalendarDays size={16} style={{color:"var(--primary)"}}/>
-                  <h3 className="font-display text-base">Recalculate Cycle Due Dates</h3>
+                  <h3 className="font-display text-base">Force-reset Cycle Due Dates</h3>
                 </div>
                 <p className="text-xs leading-relaxed" style={{color:"var(--muted)"}}>
-                  After changing <strong>Start Date</strong>, <strong>Due Day</strong>, or <strong>Frequency</strong>, use this to push
-                  the updated schedule to all <em>pending</em> (non-completed) cycle due dates.
+                  Dates auto-update when you save start date, due day or frequency. Use this only if you need to
+                  force-reset <em>pending</em> cycle dates to a specific start date without saving other settings.
                   Completed payouts are never touched.
                 </p>
                 <div className="rounded-lg px-4 py-3 text-xs space-y-1" style={{background:"var(--surface)"}}>

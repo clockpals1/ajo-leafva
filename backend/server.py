@@ -472,6 +472,38 @@ async def update_group(group_id: str, data: GroupUpdate, admin=Depends(require_a
                     await db.member_cycle_status.insert_many(status_docs)
 
     await db.groups.update_one({"id": group_id}, {"$set": updates})
+
+    # ── Auto-recalculate pending cycle due_dates when schedule fields change ──
+    if any(k in updates for k in ("start_date", "due_day", "frequency")):
+        merged = {**g, **updates}   # current doc merged with new values
+        start_str = merged.get("start_date")
+        if start_str:
+            try:
+                sdate = date.fromisoformat(start_str)
+                freq  = merged.get("frequency", "monthly")
+                dday  = int(merged.get("due_day") or sdate.day)
+                today_d = now_utc().date()
+                pending = await db.cycles.find(
+                    {"group_id": group_id, "payout_status": {"$ne": "completed"}},
+                    {"_id": 0}
+                ).sort("cycle_no", 1).to_list(1000)
+                for c in pending:
+                    n = c["cycle_no"] - 1
+                    new_due     = _add_period_with_day(sdate, freq, n, dday)
+                    new_due_str = new_due.isoformat()
+                    if new_due_str != c.get("due_date"):
+                        ns = "Due" if new_due <= today_d else "Not_Due"
+                        await db.cycles.update_one(
+                            {"id": c["id"]}, {"$set": {"due_date": new_due_str}}
+                        )
+                        await db.member_cycle_status.update_many(
+                            {"group_id": group_id, "cycle_no": c["cycle_no"],
+                             "status": {"$in": ["Due", "Not_Due"]}},
+                            {"$set": {"status": ns, "updated_at": now_utc().isoformat()}}
+                        )
+            except Exception:
+                pass  # never fail the save because of date recalculation
+
     await log_audit(admin["id"], "group_updated", target=group_id, meta=updates)
     updated = await db.groups.find_one({"id": group_id}, {"_id": 0})
     return updated
