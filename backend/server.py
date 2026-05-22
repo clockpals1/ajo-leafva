@@ -624,70 +624,69 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
     gm = await db.group_members.find_one({"group_id": group_id, "id": member_id})
     if not gm:
         raise HTTPException(404, "Member not found")
-    update: dict = {}
-    if data.payout_position is not None:
-        if data.payout_position < 1:
-            raise HTTPException(400, "Payout position must be at least 1")
-        update["payout_position"] = data.payout_position
-    if not update:
+    if data.payout_position is None:
         return {"ok": True, "changed": 0}
+    if data.payout_position < 1:
+        raise HTTPException(400, "Payout position must be at least 1")
+
     old_position = gm.get("payout_position")
-    new_position = update.get("payout_position")
-    if new_position and new_position != old_position:
-        # Check if new position is taken by another member
-        conflict = await db.group_members.find_one({"group_id": group_id, "payout_position": new_position})
-        if conflict and conflict["id"] != member_id:
-            # Find the next available position for the conflicting member
-            all_positions = await db.group_members.find({"group_id": group_id}).to_list(1000)
-            used_positions = set(m["payout_position"] for m in all_positions if m["id"] != conflict["id"] and m["id"] != member_id)
-            next_pos = 1
-            while next_pos in used_positions:
-                next_pos += 1
-            # Transactional swap: first clear conflict's position to free up the slot
-            await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": None}})
-            # Now update this member to the new position
-            await db.group_members.update_one({"id": member_id}, {"$set": {"payout_position": new_position}})
-            # Then move the conflict to the next available position
-            await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": next_pos}})
-            # Update cycle assignments for the swapped member
-            old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": old_position})
-            if old_cycle and old_cycle.get("payout_status") != "completed":
-                await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
-            new_cycle_for_conflict = await db.cycles.find_one({"group_id": group_id, "cycle_no": next_pos})
-            if new_cycle_for_conflict and new_cycle_for_conflict.get("payout_status") != "completed":
-                await db.cycles.update_one({"id": new_cycle_for_conflict["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
-            # Recalculate expected_amount for the swapped member (in case they have multiple slots)
-            conflict_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": conflict["user_id"]})
-            grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
-            per_cycle_due = grp["contribution_amount"] * conflict_slots
-            await db.member_cycle_status.update_many(
-                {"group_id": group_id, "user_id": conflict["user_id"]},
-                {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
-            )
-            # Skip the final update since we already did it
-            update.pop("payout_position", None)
-        else:
-            # No conflict: clear old cycle assignment for this member (unless already paid out)
-            await db.cycles.update_one(
-                {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
-                {"$set": {"payout_user_id": None}}
-            )
-        # Assign new cycle to this user
-        new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": new_position})
-        if new_cycle and new_cycle.get("payout_status") != "completed":
-            await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": gm["user_id"]}})
-        # Recalculate expected_amount for this member (in case they have multiple slots)
-        my_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": gm["user_id"]})
-        grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
-        per_cycle_due = grp["contribution_amount"] * my_slots
+    new_position = data.payout_position
+
+    if new_position == old_position:
+        return {"ok": True, "changed": 0}
+
+    grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
+    conflict = await db.group_members.find_one({
+        "group_id": group_id, "payout_position": new_position, "id": {"$ne": member_id}
+    })
+
+    if conflict:
+        # Swap using a guaranteed-free temp slot to avoid duplicate key errors
+        all_members = await db.group_members.find({"group_id": group_id}).to_list(1000)
+        max_pos = max((m.get("payout_position") or 0) for m in all_members)
+        temp_pos = max_pos + 1000  # safely above all existing positions
+
+        # Step 1: park member at temp position (frees old_position)
+        await db.group_members.update_one({"id": member_id}, {"$set": {"payout_position": temp_pos}})
+        # Step 2: move conflict to old_position (frees new_position)
+        await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": old_position}})
+        # Step 3: move member to new_position (now free)
+        await db.group_members.update_one({"id": member_id}, {"$set": {"payout_position": new_position}})
+
+        # Update cycles for conflict member (now at old_position)
+        old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": old_position})
+        if old_cycle and old_cycle.get("payout_status") != "completed":
+            await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
+        # Recalculate expected_amount for conflict
+        c_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": conflict["user_id"]})
         await db.member_cycle_status.update_many(
-            {"group_id": group_id, "user_id": gm["user_id"]},
-            {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+            {"group_id": group_id, "user_id": conflict["user_id"]},
+            {"$set": {"expected_amount": grp["contribution_amount"] * c_slots, "updated_at": now_utc().isoformat()}}
         )
-    await db.group_members.update_one({"id": member_id}, {"$set": update})
+    else:
+        # No conflict: direct update
+        await db.group_members.update_one({"id": member_id}, {"$set": {"payout_position": new_position}})
+        # Clear old cycle assignment for this member
+        await db.cycles.update_one(
+            {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
+            {"$set": {"payout_user_id": None}}
+        )
+
+    # Assign new cycle to this member
+    new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": new_position})
+    if new_cycle and new_cycle.get("payout_status") != "completed":
+        await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": gm["user_id"]}})
+
+    # Recalculate expected_amount for this member
+    my_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": gm["user_id"]})
+    await db.member_cycle_status.update_many(
+        {"group_id": group_id, "user_id": gm["user_id"]},
+        {"$set": {"expected_amount": grp["contribution_amount"] * my_slots, "updated_at": now_utc().isoformat()}}
+    )
+
     await log_audit(admin["id"], "member_updated", target=group_id,
-                    meta={"member_id": member_id, "changes": update})
-    return {"ok": True, "changed": len(update)}
+                    meta={"member_id": member_id, "changes": {"payout_position": new_position}})
+    return {"ok": True, "changed": 1}
 
 @api.delete("/admin/groups/{group_id}/members/{member_id}")
 async def remove_member(group_id: str, member_id: str, reason: Optional[str] = None, admin=Depends(require_admin)):
