@@ -2420,105 +2420,54 @@ async def ai_send_summary_emails(data: AISummaryEmailIn, admin=Depends(require_a
     brand = s.get("brand_name") or "Ajo Platform"
     fe = _get_fe_url(s)
 
-    # Resolve target user IDs
+    # Resolve target user IDs via group_members — no payout_position filter
     if data.user_ids:
         target_user_ids = data.user_ids
     elif data.group_id:
-        mems = await db.group_members.find({"group_id": data.group_id, "payout_position": {"$ne": None}}, {"user_id": 1}).to_list(1000)
-        target_user_ids = list({m["user_id"] for m in mems})
+        mems = await db.group_members.find({"group_id": data.group_id}, {"user_id": 1}).to_list(1000)
+        seen_uid: set = set()
+        target_user_ids = []
+        for m in mems:
+            uid_val = m.get("user_id")
+            if uid_val and uid_val not in seen_uid:
+                seen_uid.add(uid_val)
+                target_user_ids.append(uid_val)
     else:
-        all_users = await db.users.find({"role": "member"}, {"id": 1}).to_list(5000)
-        target_user_ids = [u["id"] for u in all_users]
+        # All members who have any group membership
+        all_mems = await db.group_members.find({}, {"user_id": 1}).to_list(5000)
+        seen_uid2: set = set()
+        target_user_ids = []
+        for m in all_mems:
+            uid_val = m.get("user_id")
+            if uid_val and uid_val not in seen_uid2:
+                seen_uid2.add(uid_val)
+                target_user_ids.append(uid_val)
+
+    if not target_user_ids:
+        raise HTTPException(404, "No members found. Make sure members are assigned to groups first.")
 
     sent_count = 0
     errors = []
 
     for uid in target_user_ids:
         try:
-            user_doc = await db.users.find_one({"id": uid}, {"_id": 0})
-            if not user_doc or not user_doc.get("email"):
+            content = await _build_member_email_content(uid, data.email_type, brand, fe, groq_key, model)
+            if not content:
                 continue
-
-            # Build member summary
-            memberships = await db.group_members.find({"user_id": uid, "payout_position": {"$ne": None}}).to_list(100)
-            if not memberships:
-                continue
-
-            group_lines = []
-            total_monthly = 0.0
-            for mem in memberships:
-                g = await db.groups.find_one({"id": mem["group_id"]}, {"_id": 0})
-                if not g:
-                    continue
-                slots_for_group = await db.group_members.find({"group_id": mem["group_id"], "user_id": uid, "payout_position": {"$ne": None}}).to_list(10)
-                positions = sorted([s["payout_position"] for s in slots_for_group])
-                total_members = await db.group_members.count_documents({"group_id": mem["group_id"], "payout_position": {"$ne": None}})
-                monthly = g["contribution_amount"] * len(positions)
-                payout_total = g["contribution_amount"] * total_members
-                total_monthly += monthly
-                payout_cycles = await db.cycles.find({"group_id": mem["group_id"], "payout_user_id": uid, "payout_status": {"$ne": "completed"}}, {"cycle_no": 1, "due_date": 1}).to_list(20)
-                payout_dates = ", ".join(f"Month {c['cycle_no']} ({c['due_date'][:10]})" for c in payout_cycles) or "Not yet assigned"
-                statuses = await db.member_cycle_status.find({"group_id": mem["group_id"], "user_id": uid}).to_list(200)
-                overdue = sum(1 for st in statuses if st["status"] == "Overdue")
-                due_now = sum(1 for st in statuses if st["status"] == "Due")
-                group_lines.append(
-                    f"• {g['name']}: Slot(s) #{','.join(str(p) for p in positions)} | "
-                    f"Monthly contribution: ₦{monthly:,.0f} | Payout: ₦{payout_total:,.0f} | "
-                    f"Payout month: {payout_dates}" +
-                    (f" | ⚠ {overdue} overdue" if overdue else "") +
-                    (f" | {due_now} due now" if due_now else "")
-                )
-                if len(slots_for_group) > 1:
-                    break  # avoid duplicate rows per group
-
-            summary_text = "\n".join(group_lines)
-
-            if data.email_type == "reminder":
-                subject = f"⏰ Ajo Contribution Reminder — {brand}"
-                heading = "Contribution Reminder"
-                intro = f"Hi {user_doc['name'].split()[0]}, this is a friendly reminder about your upcoming Ajo contributions."
-            else:
-                subject = f"📋 Your Ajo Group Summary — {brand}"
-                heading = "Your Ajo Summary"
-                intro = f"Hi {user_doc['name'].split()[0]}, here's a full overview of your Ajo groups."
-
-            # Use AI to personalise body when key is available
-            if groq_key and group_lines:
-                ai_system = (
-                    f"You are a friendly {brand} assistant writing a brief, warm, professional email body (3-5 sentences). "
-                    f"Email type: {data.email_type}. Keep it concise, encouraging, and action-oriented. "
-                    "Do NOT repeat the table data — add a motivational note, what they should do next, and sign off with brand name."
-                )
-                ai_user = f"Member: {user_doc['name']}. Summary:\n{summary_text}\nTotal monthly: ₦{total_monthly:,.0f}"
-                try:
-                    ai_body = await call_groq(groq_key, ai_system, ai_user, model)
-                except Exception:
-                    ai_body = intro
-            else:
-                ai_body = intro
-
-            html_rows = "".join(
-                f"<tr style='border-bottom:1px solid #e2e8f0'><td style='padding:10px 0;font-size:14px'>{line[2:]}</td></tr>"
-                for line in group_lines
+            await send_email(
+                db, content["recipient_email"], content["subject"], content["heading"],
+                content["body_html"], cta_label="View my dashboard", cta_link=f"{fe}/dashboard"
             )
-            body_html = (
-                f"{ai_body}<br><br>"
-                f"<table style='width:100%;border-collapse:collapse;margin:16px 0'>"
-                f"<tr style='background:#f8fafc'><th style='padding:10px;text-align:left;font-size:13px;color:#64748b'>YOUR GROUPS</th></tr>"
-                f"{html_rows}"
-                f"</table>"
-                f"<p style='font-size:13px;color:#64748b'>Total monthly contribution across all groups: "
-                f"<strong>₦{total_monthly:,.0f}</strong></p>"
-            )
-
-            await send_email(db, user_doc["email"], subject, heading, body_html,
-                             cta_label="View my dashboard", cta_link=f"{fe}/dashboard")
             sent_count += 1
         except Exception as exc:
             errors.append({"user_id": uid, "error": str(exc)})
 
     await log_audit(admin["id"], "ai_summary_emails",
                     meta={"type": data.email_type, "sent": sent_count, "errors": len(errors)})
+
+    if sent_count == 0 and not errors:
+        raise HTTPException(404, "No members with group data found. Make sure members are assigned to groups first.")
+
     return {"ok": True, "sent": sent_count, "errors": errors}
 
 
