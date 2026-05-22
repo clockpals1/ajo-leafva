@@ -47,7 +47,7 @@ export default function AdminDashboard() {
   const [broadMsg, setBroadMsg] = useState("");
 
   const [addUserOpen, setAddUserOpen] = useState(false);
-  const [addUserForm, setAddUserForm] = useState({ name: "", email: "", password: "", role: "member" });
+  const [addUserForm, setAddUserForm] = useState({ name: "", email: "", phone: "", group_id: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
   const [addUserErr, setAddUserErr] = useState("");
   const [roleUpdating, setRoleUpdating] = useState(null);
   const [editUserTarget, setEditUserTarget] = useState(null);
@@ -97,9 +97,19 @@ export default function AdminDashboard() {
   const submitAddUser = async (e) => {
     e.preventDefault(); setAddUserErr("");
     try {
-      await api.post("/admin/users", addUserForm);
+      const payload = {
+        name: addUserForm.name,
+        email: addUserForm.email,
+        phone: addUserForm.phone,
+        group_id: addUserForm.group_id || null,
+        payout_position: addUserForm.payout_position ? Number(addUserForm.payout_position) : null,
+        use_alias: addUserForm.use_alias,
+        display_name: addUserForm.display_name,
+        visibility_preference: addUserForm.visibility_preference,
+      };
+      await api.post("/admin/users/provision", payload);
       setAddUserOpen(false);
-      setAddUserForm({ name: "", email: "", password: "", role: "member" });
+      setAddUserForm({ name: "", email: "", phone: "", group_id: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
       load();
     } catch (e) { setAddUserErr(formatErr(e?.response?.data?.detail)); }
   };
@@ -138,6 +148,14 @@ export default function AdminDashboard() {
     if (!window.confirm(`Delete ${u.name} (${u.email})? This removes the user and all their group memberships. This cannot be undone.`)) return;
     try { await api.delete(`/admin/users/${u.id}`); load(); }
     catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const resendSetupEmail = async (u) => {
+    if (!window.confirm(`Resend the account activation email to ${u.email}?`)) return;
+    try {
+      await api.post(`/admin/users/${u.id}/resend-setup-email`);
+      alert("Email sent successfully.");
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
   const changeRole = async (userId, newRole) => {
@@ -544,6 +562,7 @@ export default function AdminDashboard() {
                         : <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fee2e2",color:"#991b1b"}}>Bank not set</span>}
                       <div className="flex items-center gap-2 mt-2 pt-2 border-t" style={{borderColor:"var(--border)"}}>
                         <button onClick={()=>openEditUser(u)} className="text-xs inline-flex items-center gap-1" style={{color:"var(--primary)"}}><Pencil size={11}/> Edit</button>
+                        <button onClick={()=>resendSetupEmail(u)} className="text-xs inline-flex items-center gap-1" style={{color:"#0891b2"}}><RefreshCw size={11}/> Resend setup</button>
                         <button onClick={()=>{ setResetPwTarget(u); setResetPwValue(""); setResetPwErr(""); }} className="text-xs inline-flex items-center gap-1" style={{color:"#854d0e"}}><KeyRound size={11}/> Set password</button>
                         <button onClick={()=>deleteUser(u)} className="text-xs inline-flex items-center gap-1 ml-auto text-red-700"><Trash2 size={11}/> Delete</button>
                       </div>
@@ -595,6 +614,7 @@ export default function AdminDashboard() {
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
                             <button onClick={()=>openEditUser(u)} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border" style={{color:"var(--primary)",borderColor:"var(--border)"}} title="Edit user"><Pencil size={11}/></button>
+                            <button onClick={()=>resendSetupEmail(u)} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border" style={{color:"#0891b2",borderColor:"#a5f3fc"}} title="Resend setup email"><RefreshCw size={11}/></button>
                             <button onClick={()=>{ setResetPwTarget(u); setResetPwValue(""); setResetPwErr(""); }} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border" style={{color:"#854d0e",borderColor:"#fde68a"}} title="Set password"><KeyRound size={11}/></button>
                             <button onClick={()=>deleteUser(u)} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border text-red-700" style={{borderColor:"#fecaca"}} title="Delete user"><Trash2 size={11}/></button>
                           </div>
@@ -706,13 +726,13 @@ export default function AdminDashboard() {
       {addUserOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={()=>setAddUserOpen(false)}>
           <form onClick={e=>e.stopPropagation()} onSubmit={submitAddUser}
-            className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl">
+            className="bg-white rounded-xl w-full max-w-md p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center gap-2 mb-1">
               <UserPlus size={18} style={{color:"var(--primary)"}} />
               <h3 className="font-display text-xl">Add User</h3>
             </div>
-            <p className="text-xs mb-5" style={{color:"var(--muted)"}}>Create an account on behalf of a member. They can log in and update their profile.</p>
-            <div className="space-y-3">
+            <p className="text-xs mb-5" style={{color:"var(--muted)"}}>Create an account. The member will receive an email to set their password.</p>
+            <div className="space-y-4">
               <div>
                 <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Full name</label>
                 <input required value={addUserForm.name} onChange={e=>setAddUserForm({...addUserForm,name:e.target.value})}
@@ -724,24 +744,64 @@ export default function AdminDashboard() {
                   className="w-full border rounded px-3 py-2 text-sm" placeholder="amaka@example.com" />
               </div>
               <div>
-                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Temporary password</label>
-                <input required type="password" value={addUserForm.password} onChange={e=>setAddUserForm({...addUserForm,password:e.target.value})}
-                  className="w-full border rounded px-3 py-2 text-sm" placeholder="Min. 6 characters" />
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Phone (optional)</label>
+                <input value={addUserForm.phone} onChange={e=>setAddUserForm({...addUserForm,phone:e.target.value})}
+                  className="w-full border rounded px-3 py-2 text-sm" placeholder="+234..." />
               </div>
-              <div>
-                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Role</label>
-                <select value={addUserForm.role} onChange={e=>setAddUserForm({...addUserForm,role:e.target.value})}
-                  className="w-full border rounded px-3 py-2 text-sm bg-white">
-                  <option value="member">member — regular ajo participant</option>
-                  <option value="admin">admin — can manage groups</option>
-                  <option value="super_admin">super_admin — full platform access</option>
-                </select>
+              <div className="pt-2 border-t" style={{borderColor:"var(--border)"}}>
+                <div className="text-xs font-semibold mb-2" style={{color:"var(--muted)"}}>Group assignment (optional)</div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Add to group</label>
+                    <select value={addUserForm.group_id} onChange={e=>setAddUserForm({...addUserForm,group_id:e.target.value})}
+                      className="w-full border rounded px-3 py-2 text-sm bg-white">
+                      <option value="">— No group —</option>
+                      {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                  {addUserForm.group_id && (
+                    <div>
+                      <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Payout position (optional)</label>
+                      <input type="number" min="1" value={addUserForm.payout_position} onChange={e=>setAddUserForm({...addUserForm,payout_position:e.target.value})}
+                        className="w-full border rounded px-3 py-2 text-sm" placeholder="Leave empty for next available" />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="pt-2 border-t" style={{borderColor:"var(--border)"}}>
+                <div className="text-xs font-semibold mb-2" style={{color:"var(--muted)"}}>Privacy settings</div>
+                <div className="space-y-3">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={addUserForm.use_alias} onChange={e=>setAddUserForm({...addUserForm,use_alias:e.target.checked})}
+                      className="mt-0.5 w-4 h-4" />
+                    <div className="text-xs">
+                      <b>Use display name in groups</b>
+                      <div style={{color:"var(--muted)"}}>Other members will see this alias instead of your real name.</div>
+                    </div>
+                  </label>
+                  {addUserForm.use_alias && (
+                    <div>
+                      <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Display name / Alias</label>
+                      <input value={addUserForm.display_name} onChange={e=>setAddUserForm({...addUserForm,display_name:e.target.value})}
+                        className="w-full border rounded px-3 py-2 text-sm" placeholder="e.g. AjoChamp" />
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Visibility in groups</label>
+                    <select value={addUserForm.visibility_preference} onChange={e=>setAddUserForm({...addUserForm,visibility_preference:e.target.value})}
+                      className="w-full border rounded px-3 py-2 text-sm bg-white">
+                      <option value="visible">Visible — other members see your name</option>
+                      <option value="limited">Limited — only admins see full details</option>
+                      <option value="hidden">Hidden — only admins see you exist</option>
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
             {addUserErr && <div className="text-red-700 text-sm mt-3">{addUserErr}</div>}
             <div className="flex gap-2 mt-5 justify-end">
               <button type="button" onClick={()=>setAddUserOpen(false)} className="btn-secondary text-sm">Cancel</button>
-              <button type="submit" className="btn-primary text-sm inline-flex items-center gap-1.5"><UserPlus size={13}/>Create user</button>
+              <button type="submit" className="btn-primary text-sm inline-flex items-center gap-1.5"><UserPlus size={13}/>Create & send email</button>
             </div>
           </form>
         </div>

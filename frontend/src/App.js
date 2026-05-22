@@ -13,6 +13,7 @@ import InvitePage from "./pages/InvitePage";
 import JoinPage from "./pages/JoinPage";
 import Notifications from "./pages/Notifications";
 import Profile from "./pages/Profile";
+import SetPassword from "./pages/SetPassword";
 import { Toaster } from "sonner";
 
 function Protected({ children, adminOnly = false }) {
@@ -48,6 +49,7 @@ function App() {
           <Route path="/join/:token" element={<JoinPage />} />
           <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
           <Route path="/profile" element={<Protected><Profile /></Protected>} />
+          <Route path="/set-password" element={<SetPassword />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </BrowserRouter>

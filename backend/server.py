@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import uuid
+import secrets
 import logging
 import bcrypt
 import jwt
@@ -165,6 +166,20 @@ class AdminCreateUser(BaseModel):
     email: EmailStr
     password: str
     role: Literal["member", "admin", "super_admin"] = "member"
+
+class AdminProvisionUser(BaseModel):
+    name: str
+    email: EmailStr
+    phone: Optional[str] = ""
+    group_id: Optional[str] = None
+    payout_position: Optional[int] = None
+    use_alias: bool = False
+    display_name: Optional[str] = ""
+    visibility_preference: Literal["visible", "limited", "hidden"] = "visible"
+
+class SetPasswordFromTokenIn(BaseModel):
+    token: str
+    password: str
 
 class UserRoleUpdate(BaseModel):
     role: Literal["member", "admin", "super_admin"]
@@ -974,6 +989,149 @@ async def admin_create_user(data: AdminCreateUser, admin=Depends(require_admin))
     user.pop("_id", None)
     return user
 
+@api.post("/admin/users/provision")
+async def provision_user(data: AdminProvisionUser, admin=Depends(require_admin)):
+    """Admin creates a member account without needing a password — member sets their own via email link."""
+    email = data.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(400, "An account with this email already exists.")
+    group = None
+    if data.group_id:
+        group = await db.groups.find_one({"id": data.group_id})
+        if not group:
+            raise HTTPException(404, "Group not found")
+    user_id = str(uuid.uuid4())
+    temp_pw = secrets.token_urlsafe(24)
+    user_doc = {
+        "id": user_id, "email": email, "name": data.name,
+        "password_hash": hash_pw(temp_pw),
+        "role": "member", "phone": data.phone or "",
+        "bank_name": "", "bank_account_number": "", "bank_account_name": "",
+        "display_name": data.display_name or "",
+        "use_alias": data.use_alias,
+        "visibility_preference": data.visibility_preference,
+        "visibility_status": "approved",
+        "must_change_password": True,
+        "created_at": now_utc().isoformat(),
+        "provisioned_by": admin["id"],
+    }
+    await db.users.insert_one(user_doc.copy())
+    setup_token = secrets.token_urlsafe(32)
+    await db.password_set_tokens.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user_id, "token": setup_token,
+        "expires_at": (now_utc() + timedelta(days=7)).isoformat(), "used": False,
+    })
+    position = None
+    if group:
+        count = await db.group_members.count_documents({"group_id": data.group_id})
+        if count >= group["member_limit"]:
+            await db.users.delete_one({"id": user_id})
+            await db.password_set_tokens.delete_many({"user_id": user_id})
+            raise HTTPException(400, "Group member limit reached.")
+        position = data.payout_position or (count + 1)
+        pos_taken = await db.group_members.find_one({"group_id": data.group_id, "payout_position": position})
+        if pos_taken:
+            await db.users.delete_one({"id": user_id})
+            await db.password_set_tokens.delete_many({"user_id": user_id})
+            raise HTTPException(400, f"Payout position {position} is already taken.")
+        gm = {
+            "id": str(uuid.uuid4()), "group_id": data.group_id, "user_id": user_id,
+            "user_email": email, "user_name": data.name, "payout_position": position,
+            "joined_at": now_utc().isoformat(), "status": "active",
+        }
+        await db.group_members.insert_one(gm.copy())
+        cycles_list = await db.cycles.find({"group_id": data.group_id}).to_list(1000)
+        today_d = now_utc().date()
+        status_docs = [{"id": str(uuid.uuid4()), "group_id": data.group_id, "cycle_no": c["cycle_no"],
+            "user_id": user_id, "status": "Due" if date.fromisoformat(c["due_date"]) <= today_d else "Not_Due",
+            "expected_amount": c["expected_amount"], "paid_amount": 0,
+            "approved_at": None, "approver_id": None, "updated_at": now_utc().isoformat(),
+        } for c in cycles_list]
+        if status_docs:
+            await db.member_cycle_status.insert_many(status_docs)
+        pc = await db.cycles.find_one({"group_id": data.group_id, "cycle_no": position})
+        if pc and not pc.get("payout_user_id"):
+            await db.cycles.update_one({"id": pc["id"]}, {"$set": {"payout_user_id": user_id}})
+    fe = _primary_fe_url()
+    setup_link = f"{fe}/set-password?token={setup_token}"
+    freq_map = {"monthly": "monthly", "weekly": "weekly", "biweekly": "every 2 weeks"}
+    group_html = ""
+    if group and position:
+        privacy_note = ""
+        if data.use_alias or data.visibility_preference != "visible":
+            privacy_note = "<p style='margin-top:12px;padding:12px;background:#f0fdf4;border-radius:8px;font-size:14px;color:#166534;'>&#128274; <strong>Your privacy is protected.</strong> Your alias name will be shown to other members — your real identity stays confidential.</p>"
+        group_html = (
+            f"<div style='margin:20px 0;padding:16px;background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;'>"
+            f"<div style='font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;'>Your Group</div>"
+            f"<div style='font-size:20px;font-weight:700;color:#1e293b;margin-bottom:14px;'>{group['name']}</div>"
+            f"<table style='font-size:14px;border-collapse:collapse;'>"
+            f"<tr><td style='padding:3px 20px 3px 0;color:#64748b;'>Monthly contribution</td>"
+            f"<td style='font-weight:600;color:#1e293b;'>&#8358;{group['contribution_amount']:,.0f} ({freq_map.get(group['frequency'], group['frequency'])})</td></tr>"
+            f"<tr><td style='padding:3px 20px 3px 0;color:#64748b;'>Your payout slot</td>"
+            f"<td style='font-weight:600;color:#1e293b;'>#{position} of {group['total_cycles']}</td></tr>"
+            f"</table>{privacy_note}</div>"
+        )
+    await send_email(db, email,
+        "Activate your Ajo account",
+        f"Welcome, {data.name}!",
+        f"Your administrator has created an Ajo account for you. "
+        f"Ajo is a trusted contribution savings circle — every member contributes regularly and takes turns receiving the full pot."
+        f"{group_html}"
+        f"<p style='margin-top:16px;color:#475569;font-size:14px;'>Click the button below to set your password and access your dashboard. "
+        f"This link is valid for <strong>7 days</strong>. If it expires, contact your admin for a new link.</p>",
+        cta_label="Set my password &amp; activate account",
+        cta_link=setup_link,
+    )
+    await push_notification(user_id, "Welcome to Ajo Platform",
+        f"Your account is ready. Check your email to set your password.")
+    await log_audit(admin["id"], "user_provisioned", target=user_id, meta={"email": email, "group_id": data.group_id})
+    user_doc.pop("password_hash", None); user_doc.pop("_id", None)
+    return user_doc
+
+@api.post("/admin/users/{user_id}/resend-setup-email")
+async def resend_setup_email(user_id: str, admin=Depends(require_admin)):
+    u = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not u:
+        raise HTTPException(404, "User not found")
+    await db.password_set_tokens.delete_many({"user_id": user_id})
+    setup_token = secrets.token_urlsafe(32)
+    await db.password_set_tokens.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user_id, "token": setup_token,
+        "expires_at": (now_utc() + timedelta(days=7)).isoformat(), "used": False,
+    })
+    setup_link = f"{_primary_fe_url()}/set-password?token={setup_token}"
+    await send_email(db, u["email"],
+        "Set your Ajo password",
+        f"Hi {u['name']},",
+        "Your admin has sent you a new account activation link. Click the button below to set your password and access your dashboard.",
+        cta_label="Set my password",
+        cta_link=setup_link,
+    )
+    await log_audit(admin["id"], "setup_email_resent", target=user_id, meta={"email": u["email"]})
+    return {"ok": True}
+
+@api.post("/auth/setup/complete")
+async def complete_account_setup(data: SetPasswordFromTokenIn, response: Response):
+    """Public endpoint — member sets their password using the emailed token. Returns JWT for auto-login."""
+    if len(data.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    tok = await db.password_set_tokens.find_one({"token": data.token})
+    if not tok or tok.get("used"):
+        raise HTTPException(400, "This link is invalid or has already been used. Ask your admin to resend the setup email.")
+    if now_utc().isoformat() > tok["expires_at"]:
+        raise HTTPException(400, "This link has expired (7 days). Ask your admin to resend the setup email.")
+    u = await db.users.find_one({"id": tok["user_id"]}, {"_id": 0})
+    if not u:
+        raise HTTPException(404, "Account not found.")
+    await db.users.update_one({"id": u["id"]}, {"$set": {
+        "password_hash": hash_pw(data.password), "must_change_password": False,
+    }})
+    await db.password_set_tokens.update_one({"id": tok["id"]}, {"$set": {"used": True}})
+    jwt_token = make_token(u["id"], u["email"], u["role"])
+    set_auth_cookie(response, jwt_token)
+    fresh = await db.users.find_one({"id": u["id"]}, {"_id": 0, "password_hash": 0})
+    return {"user": fresh, "token": jwt_token}
+
 class UpdateUserIn(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
@@ -1008,7 +1166,7 @@ async def admin_set_password(user_id: str, data: SetPasswordIn, admin=Depends(re
         raise HTTPException(404, "User not found")
     if len(data.password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
-    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": hash_pw(data.password)}})
+    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": hash_pw(data.password), "must_change_password": False}})
     await log_audit(admin["id"], "password_reset_by_admin", target=user_id)
     return {"ok": True}
 
