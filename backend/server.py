@@ -519,10 +519,26 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
     if count >= group["member_limit"]:
         raise HTTPException(400, "Group member limit reached")
     position = data.payout_position or (count + 1)
-    # Guard against duplicate position
+    # If position is taken, swap with the existing member
     pos_taken = await db.group_members.find_one({"group_id": group_id, "payout_position": position})
     if pos_taken:
-        raise HTTPException(400, f"Payout position {position} is already taken.")
+        # Swap: move the existing member to the next available position
+        next_pos = count + 1
+        await db.group_members.update_one({"id": pos_taken["id"]}, {"$set": {"payout_position": next_pos}})
+        # Update cycle assignment for the swapped member
+        old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": position})
+        if old_cycle and old_cycle.get("payout_status") != "completed":
+            await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": pos_taken["user_id"]}})
+        new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": next_pos})
+        if new_cycle and new_cycle.get("payout_status") != "completed":
+            await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": pos_taken["user_id"]}})
+        # Recalculate expected_amount for the swapped member
+        conflict_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": pos_taken["user_id"]})
+        per_cycle_due = group["contribution_amount"] * conflict_slots
+        await db.member_cycle_status.update_many(
+            {"group_id": group_id, "user_id": pos_taken["user_id"]},
+            {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+        )
     gm = {
         "id": str(uuid.uuid4()),
         "group_id": group_id,
@@ -1052,9 +1068,23 @@ async def provision_user(data: AdminProvisionUser, admin=Depends(require_admin))
         position = data.payout_position or (count + 1)
         pos_taken = await db.group_members.find_one({"group_id": data.group_id, "payout_position": position})
         if pos_taken:
-            await db.users.delete_one({"id": user_id})
-            await db.password_set_tokens.delete_many({"user_id": user_id})
-            raise HTTPException(400, f"Payout position {position} is already taken.")
+            # Swap: move the existing member to the next available position
+            next_pos = count + 1
+            await db.group_members.update_one({"id": pos_taken["id"]}, {"$set": {"payout_position": next_pos}})
+            # Update cycle assignment for the swapped member
+            old_cycle = await db.cycles.find_one({"group_id": data.group_id, "cycle_no": position})
+            if old_cycle and old_cycle.get("payout_status") != "completed":
+                await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": pos_taken["user_id"]}})
+            new_cycle = await db.cycles.find_one({"group_id": data.group_id, "cycle_no": next_pos})
+            if new_cycle and new_cycle.get("payout_status") != "completed":
+                await db.cycles.update_one({"id": new_cycle["id"]}, {"$set": {"payout_user_id": pos_taken["user_id"]}})
+            # Recalculate expected_amount for the swapped member
+            conflict_slots = await db.group_members.count_documents({"group_id": data.group_id, "user_id": pos_taken["user_id"]})
+            per_cycle_due = group["contribution_amount"] * conflict_slots
+            await db.member_cycle_status.update_many(
+                {"group_id": data.group_id, "user_id": pos_taken["user_id"]},
+                {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
+            )
         gm = {
             "id": str(uuid.uuid4()), "group_id": data.group_id, "user_id": user_id,
             "user_email": email, "user_name": data.name, "payout_position": position,
