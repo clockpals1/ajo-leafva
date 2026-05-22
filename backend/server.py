@@ -2049,6 +2049,89 @@ async def startup():
     await db.invitations.create_index("token", unique=True)
     await db.group_comments.create_index([("group_id", 1), ("created_at", -1)])
 
+async def _build_member_email_content(uid: str, email_type: str, brand: str, fe: str, groq_key: str, model: str) -> dict | None:
+    """Shared logic: build email content for one member without sending."""
+    user_doc = await db.users.find_one({"id": uid}, {"_id": 0})
+    if not user_doc or not user_doc.get("email"):
+        return None
+    memberships = await db.group_members.find({"user_id": uid}).to_list(100)
+    if not memberships:
+        return None
+
+    group_lines, total_monthly, seen = [], 0.0, set()
+    for mem in memberships:
+        gid = mem["group_id"]
+        if gid in seen:
+            continue
+        seen.add(gid)
+        g = await db.groups.find_one({"id": gid}, {"_id": 0})
+        if not g:
+            continue
+        slots = await db.group_members.find({"group_id": gid, "user_id": uid}).to_list(10)
+        positions = sorted([s["payout_position"] for s in slots if s.get("payout_position") is not None])
+        if not positions:
+            continue
+        total_members = await db.group_members.count_documents({"group_id": gid, "payout_position": {"$ne": None}})
+        monthly = g["contribution_amount"] * len(positions)
+        payout_total = g["contribution_amount"] * total_members
+        total_monthly += monthly
+        payout_cycles = await db.cycles.find(
+            {"group_id": gid, "payout_user_id": uid, "payout_status": {"$ne": "completed"}},
+            {"cycle_no": 1, "due_date": 1}
+        ).to_list(20)
+        payout_dates = ", ".join(f"Month {c['cycle_no']} ({c['due_date'][:10]})" for c in payout_cycles) or "Not yet assigned"
+        statuses = await db.member_cycle_status.find({"group_id": gid, "user_id": uid}).to_list(200)
+        overdue = sum(1 for st in statuses if st["status"] == "Overdue")
+        due_now = sum(1 for st in statuses if st["status"] == "Due")
+        group_lines.append(
+            f"• {g['name']}: Slot(s) #{','.join(str(p) for p in positions)} | "
+            f"Monthly: ₦{monthly:,.0f} | Payout: ₦{payout_total:,.0f} | "
+            f"Payout month: {payout_dates}" +
+            (f" | ⚠ {overdue} overdue" if overdue else "") +
+            (f" | {due_now} due now" if due_now else "")
+        )
+
+    if not group_lines:
+        return None
+
+    if email_type == "reminder":
+        subject = f"⏰ Ajo Contribution Reminder — {brand}"
+        heading = "Contribution Reminder"
+        intro = f"Hi {user_doc['name'].split()[0]}, this is a friendly reminder about your upcoming Ajo contributions."
+    else:
+        subject = f"📋 Your Ajo Group Summary — {brand}"
+        heading = "Your Ajo Summary"
+        intro = f"Hi {user_doc['name'].split()[0]}, here's a full overview of your Ajo groups."
+
+    if groq_key and group_lines:
+        ai_system = (
+            f"You are a friendly {brand} assistant writing a brief, warm, professional email body (3-5 sentences). "
+            f"Email type: {email_type}. Keep it concise, encouraging, action-oriented. "
+            "Do NOT repeat the table data — add a motivational note and what to do next."
+        )
+        try:
+            ai_body = await call_groq(groq_key, ai_system, f"Member: {user_doc['name']}. Summary:\n" + "\n".join(group_lines), model)
+        except Exception:
+            ai_body = intro
+    else:
+        ai_body = intro
+
+    html_rows = "".join(
+        f"<tr style='border-bottom:1px solid #e2e8f0'><td style='padding:10px 0;font-size:14px'>{line[2:]}</td></tr>"
+        for line in group_lines
+    )
+    body_html = (
+        f"{ai_body}<br><br>"
+        f"<table style='width:100%;border-collapse:collapse;margin:16px 0'>"
+        f"<tr style='background:#f8fafc'><th style='padding:10px;text-align:left;font-size:13px;color:#64748b'>YOUR GROUPS</th></tr>"
+        f"{html_rows}"
+        f"</table>"
+        f"<p style='font-size:13px;color:#64748b'>Total monthly contribution: <strong>₦{total_monthly:,.0f}</strong></p>"
+    )
+    return {"subject": subject, "heading": heading, "body_html": body_html,
+            "recipient_name": user_doc["name"], "recipient_email": user_doc["email"]}
+
+
 # ──────────────────────────────────────────────
 # AI ASSISTANT  (Groq / open-source Llama 3)
 # ──────────────────────────────────────────────
@@ -2232,11 +2315,39 @@ async def ai_send_summary_emails(data: AISummaryEmailIn, admin=Depends(require_a
     return {"ok": True, "sent": sent_count, "errors": errors}
 
 
+class AIPreviewEmailIn(BaseModel):
+    group_id: Optional[str] = None
+    email_type: Literal["summary", "reminder"] = "summary"
+
+@api.post("/admin/ai/preview-summary-email")
+async def ai_preview_summary_email(data: AIPreviewEmailIn, admin=Depends(require_admin)):
+    """Build and return email content for one sample member without sending (for admin review)."""
+    s = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    groq_key = s.get("groq_api_key")
+    model = s.get("groq_model") or "llama-3.3-70b-versatile"
+    brand = s.get("brand_name") or "Ajo Platform"
+    fe = _get_fe_url(s)
+
+    if data.group_id:
+        mems = await db.group_members.find({"group_id": data.group_id}, {"user_id": 1}).to_list(1000)
+        target_user_ids = list({m["user_id"] for m in mems})
+    else:
+        all_users = await db.users.find({"role": "member"}, {"id": 1}).limit(20).to_list(20)
+        target_user_ids = [u["id"] for u in all_users]
+
+    for uid in target_user_ids:
+        content = await _build_member_email_content(uid, data.email_type, brand, fe, groq_key, model)
+        if content:
+            return {"ok": True, "preview": content}
+
+    raise HTTPException(404, "No members with group data found to preview.")
+
+
 # ── Member: own Ajo summary ──
 @api.get("/member/my-summary")
 async def member_my_summary(user=Depends(get_current_user)):
     """Return the authenticated member's full contribution summary across all groups."""
-    memberships = await db.group_members.find({"user_id": user["id"], "payout_position": {"$ne": None}}).to_list(100)
+    memberships = await db.group_members.find({"user_id": user["id"]}).to_list(100)
     seen_groups: set = set()
     groups_out = []
     total_monthly = 0.0
@@ -2250,8 +2361,8 @@ async def member_my_summary(user=Depends(get_current_user)):
         if not g:
             continue
 
-        my_slots_docs = await db.group_members.find({"group_id": gid, "user_id": user["id"], "payout_position": {"$ne": None}}).to_list(20)
-        positions = sorted([s["payout_position"] for s in my_slots_docs])
+        my_slots_docs = await db.group_members.find({"group_id": gid, "user_id": user["id"]}).to_list(20)
+        positions = sorted([s["payout_position"] for s in my_slots_docs if s.get("payout_position") is not None])
         total_members = await db.group_members.count_documents({"group_id": gid, "payout_position": {"$ne": None}})
         monthly_due = g["contribution_amount"] * len(positions)
         payout_total = g["contribution_amount"] * total_members

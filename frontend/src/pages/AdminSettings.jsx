@@ -35,6 +35,8 @@ export default function AdminSettings() {
   const [aiEmailBusy, setAiEmailBusy] = useState(false);
   const [aiEmailResult, setAiEmailResult] = useState(null);
   const [groups, setGroups] = useState([]);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
 
   useEffect(() => {
     api.get("/admin/groups").then(r => setGroups(r.data)).catch(() => {});
@@ -49,6 +51,17 @@ export default function AdminSettings() {
       setAiEmailResult({ ok: true, msg: `✓ Sent to ${data.sent} member${data.sent !== 1 ? "s" : ""}${data.errors?.length ? ` (${data.errors.length} failed)` : ""}` });
     } catch (e) { setAiEmailResult({ ok: false, msg: formatErr(e?.response?.data?.detail) }); }
     finally { setAiEmailBusy(false); }
+  };
+
+  const previewAiEmail = async () => {
+    setPreviewBusy(true); setPreview(null);
+    try {
+      const payload = { email_type: aiEmailType };
+      if (aiEmailGroup) payload.group_id = aiEmailGroup;
+      const { data } = await api.post("/admin/ai/preview-summary-email", payload);
+      setPreview(data.preview);
+    } catch (e) { alert(formatErr(e?.response?.data?.detail) || "Preview failed"); }
+    finally { setPreviewBusy(false); }
   };
 
   const save = async (e) => {
@@ -78,6 +91,40 @@ export default function AdminSettings() {
   return (
     <div className="min-h-screen bg-app">
       <TopNav />
+
+      {/* ── Email Preview Modal ── */}
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.55)"}} onClick={()=>setPreview(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-start justify-between px-5 py-4 border-b" style={{borderColor:"var(--border)"}}>
+              <div>
+                <h3 className="font-display text-lg">Email Preview</h3>
+                <p className="text-xs mt-0.5" style={{color:"var(--muted)"}}>
+                  Sample for: <strong>{preview.recipient_name}</strong> ({preview.recipient_email})
+                </p>
+              </div>
+              <button onClick={()=>setPreview(null)} className="p-2 rounded-lg hover:bg-gray-100 -mt-1 -mr-1">
+                <ChevronUp size={18}/>
+              </button>
+            </div>
+            <div className="px-5 py-3 border-b flex gap-6 text-xs" style={{borderColor:"var(--border)",background:"var(--surface)"}}>
+              <div><span style={{color:"var(--muted)"}}>Subject:</span> <strong>{preview.subject}</strong></div>
+            </div>
+            <div className="overflow-y-auto flex-1 p-5">
+              <div className="text-sm font-semibold mb-2" style={{color:"var(--primary)"}}>{preview.heading}</div>
+              <div className="text-sm leading-relaxed" style={{color:"#374151"}}
+                dangerouslySetInnerHTML={{__html: preview.body_html}} />
+            </div>
+            <div className="px-5 py-3 border-t flex justify-end gap-3" style={{borderColor:"var(--border)"}}>
+              <button onClick={()=>setPreview(null)} className="btn-secondary text-sm">Close</button>
+              <button onClick={()=>{ setPreview(null); sendAiEmails(); }} disabled={aiEmailBusy}
+                className="btn-primary text-sm inline-flex items-center gap-2">
+                <Send size={14}/> Looks good — send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <main className="max-w-3xl mx-auto px-6 py-10">
         <div className="label-eyebrow mb-2">Admin · Platform Settings</div>
         <h1 className="font-display text-3xl mb-2">System configuration</h1>
@@ -212,7 +259,11 @@ export default function AdminSettings() {
                 </select>
               </div>
             </div>
-            <div className="flex items-center gap-3 mt-3">
+            <div className="flex flex-wrap items-center gap-3 mt-3">
+              <button type="button" disabled={previewBusy} onClick={previewAiEmail}
+                className="btn-secondary text-sm inline-flex items-center gap-2">
+                {previewBusy ? <><Loader2 size={14} className="animate-spin"/> Loading…</> : <><ChevronDown size={14}/> Preview email</>}
+              </button>
               <button type="button" disabled={aiEmailBusy} onClick={sendAiEmails}
                 className="btn-primary text-sm inline-flex items-center gap-2">
                 {aiEmailBusy ? <><Loader2 size={14} className="animate-spin"/> Sending…</> : <><Send size={14}/> Send emails</>}
