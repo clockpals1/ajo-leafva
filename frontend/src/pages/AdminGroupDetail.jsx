@@ -51,6 +51,9 @@ export default function AdminGroupDetail() {
   const [addEmail, setAddEmail] = useState("");
   const [addPos, setAddPos] = useState("");
   const [err, setErr] = useState("");
+  const [addMode, setAddMode] = useState("existing"); // "existing" | "new"
+  const [newMemberForm, setNewMemberForm] = useState({ name: "", email: "", phone: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
+  const [newMemberBusy, setNewMemberBusy] = useState(false);
   const [tab, setTab] = useState("members");
   const [editData, setEditData] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -142,6 +145,26 @@ export default function AdminGroupDetail() {
       await api.post(`/admin/groups/${id}/members`, { email: addEmail, payout_position: addPos ? Number(addPos) : null });
       setAddEmail(""); setAddPos(""); load();
     } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const submitNewMember = async (e) => {
+    e.preventDefault(); setErr(""); setNewMemberBusy(true);
+    try {
+      await api.post("/admin/users/provision", {
+        name: newMemberForm.name,
+        email: newMemberForm.email,
+        phone: newMemberForm.phone,
+        group_id: id,
+        payout_position: newMemberForm.payout_position ? Number(newMemberForm.payout_position) : null,
+        use_alias: newMemberForm.use_alias,
+        display_name: newMemberForm.display_name,
+        visibility_preference: newMemberForm.visibility_preference,
+      });
+      setNewMemberForm({ name: "", email: "", phone: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
+      setAddMode("existing");
+      load();
+    } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
+    finally { setNewMemberBusy(false); }
   };
 
   const startEditPos = (mid, current) =>
@@ -309,9 +332,9 @@ export default function AdminGroupDetail() {
                                 </div>
                               ) : (
                                 <button onClick={()=>startEditPos(s.id,s.payout_position)}
-                                  className="badge s-Payout_Eligible inline-flex items-center gap-1 cursor-pointer group"
-                                  title="Click to edit position">
-                                  #{s.payout_position} <Pencil size={8} className="opacity-0 group-hover:opacity-60"/>
+                                  className="badge s-Payout_Eligible inline-flex items-center gap-1 cursor-pointer"
+                                  title="Click to change slot number">
+                                  #{s.payout_position} <Pencil size={9} className="opacity-60"/>
                                 </button>
                               )}
                               {pc && <span className="text-xs" style={{color:"var(--muted)"}}>{fmtDate(pc.due_date)}</span>}
@@ -361,9 +384,10 @@ export default function AdminGroupDetail() {
                                   </div>
                                 ) : (
                                   <button onClick={()=>startEditPos(s.id,s.payout_position)}
-                                    className="font-display inline-flex items-center gap-1 group opacity-90 hover:opacity-100"
-                                    title="Click to edit position">
-                                    #{s.payout_position} <Pencil size={10} className="opacity-0 group-hover:opacity-60"/>
+                                    className="font-display inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-xs"
+                                    style={{borderColor:"var(--border)",color:"var(--text)"}}
+                                    title="Change slot number">
+                                    <Pencil size={10} className="opacity-60"/> Slot #{s.payout_position}
                                   </button>
                                 )}
                                 {pc && <span className="text-xs" style={{color:"var(--muted)"}}>{fmtDate(pc.due_date)}</span>}
@@ -401,23 +425,83 @@ export default function AdminGroupDetail() {
                 </tbody>
               </table>
             </div>
-            <form onSubmit={addMember} className="card-tactile p-4 sm:p-5" data-testid="add-member-form">
+            <div className="card-tactile p-4 sm:p-5" data-testid="add-member-form">
               <h3 className="font-display text-lg mb-3 flex items-center gap-2"><UserPlus size={16}/> Add member</h3>
-              <div className="mb-3">
-                <label className="form-label">Member</label>
-                <select required value={addEmail} onChange={e=>setAddEmail(e.target.value)} className="form-input" data-testid="add-email">
-                  <option value="">— Select existing user —</option>
-                  {newUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}</option>)}
-                </select>
+              {/* Mode toggle */}
+              <div className="flex rounded-lg overflow-hidden border mb-4 text-sm" style={{borderColor:"var(--border)"}}>
+                <button type="button" onClick={()=>{ setAddMode("existing"); setErr(""); }}
+                  className={`flex-1 py-2 font-semibold transition-colors ${addMode==="existing" ? "text-white" : ""}`}
+                  style={{background: addMode==="existing" ? "var(--primary)" : "transparent", color: addMode==="existing" ? "#fff" : "var(--muted)"}}>
+                  Existing user
+                </button>
+                <button type="button" onClick={()=>{ setAddMode("new"); setErr(""); }}
+                  className="flex-1 py-2 font-semibold transition-colors"
+                  style={{background: addMode==="new" ? "var(--primary)" : "transparent", color: addMode==="new" ? "#fff" : "var(--muted)"}}>
+                  New user
+                </button>
               </div>
-              <div className="mb-3">
-                <label className="form-label">Payout position <span className="font-normal">(optional)</span></label>
-                <input type="number" value={addPos} onChange={e=>setAddPos(e.target.value)} className="form-input" data-testid="add-position"/>
-              </div>
-              {err && <div className="px-3 py-2 rounded-lg text-sm text-red-700 mb-3" style={{background:"#fef2f2"}} data-testid="add-error">{err}</div>}
-              <button className="btn-primary text-sm w-full" data-testid="add-submit">Add to group</button>
+
+              {addMode === "existing" ? (
+                <form onSubmit={addMember}>
+                  <div className="mb-3">
+                    <label className="form-label">Member</label>
+                    <select required value={addEmail} onChange={e=>setAddEmail(e.target.value)} className="form-input" data-testid="add-email">
+                      <option value="">— Select existing user —</option>
+                      {newUsers.map(u => <option key={u.id} value={u.email}>{u.name} · {u.email}</option>)}
+                    </select>
+                    {newUsers.length === 0 && <p className="text-xs mt-1" style={{color:"var(--muted)"}}>All registered users are already in this group. Use <b>New user</b> to create one.</p>}
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Payout slot <span className="font-normal">(leave empty for next available)</span></label>
+                    <input type="number" min="1" value={addPos} onChange={e=>setAddPos(e.target.value)} className="form-input" placeholder="e.g. 3" data-testid="add-position"/>
+                  </div>
+                  {err && <div className="px-3 py-2 rounded-lg text-sm text-red-700 mb-3" style={{background:"#fef2f2"}} data-testid="add-error">{err}</div>}
+                  <button className="btn-primary text-sm w-full" data-testid="add-submit">Add to group</button>
+                </form>
+              ) : (
+                <form onSubmit={submitNewMember}>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="form-label">Full name *</label>
+                      <input required value={newMemberForm.name} onChange={e=>setNewMemberForm(f=>({...f,name:e.target.value}))} className="form-input" placeholder="e.g. Amaka Osei" />
+                    </div>
+                    <div>
+                      <label className="form-label">Email address *</label>
+                      <input required type="email" value={newMemberForm.email} onChange={e=>setNewMemberForm(f=>({...f,email:e.target.value}))} className="form-input" placeholder="amaka@example.com" />
+                    </div>
+                    <div>
+                      <label className="form-label">Phone <span className="font-normal">(optional)</span></label>
+                      <input value={newMemberForm.phone} onChange={e=>setNewMemberForm(f=>({...f,phone:e.target.value}))} className="form-input" placeholder="+234..." />
+                    </div>
+                    <div>
+                      <label className="form-label">Payout slot <span className="font-normal">(leave empty for next available)</span></label>
+                      <input type="number" min="1" value={newMemberForm.payout_position} onChange={e=>setNewMemberForm(f=>({...f,payout_position:e.target.value}))} className="form-input" placeholder="e.g. 3" />
+                    </div>
+                    <div className="pt-2 border-t" style={{borderColor:"var(--border)"}}>
+                      <div className="text-xs font-semibold mb-2" style={{color:"var(--muted)"}}>Privacy</div>
+                      <label className="flex items-start gap-2 cursor-pointer mb-2">
+                        <input type="checkbox" checked={newMemberForm.use_alias} onChange={e=>setNewMemberForm(f=>({...f,use_alias:e.target.checked}))} className="mt-0.5 w-4 h-4" />
+                        <span className="text-xs"><b>Hide real name</b> — show alias to other members</span>
+                      </label>
+                      {newMemberForm.use_alias && (
+                        <input value={newMemberForm.display_name} onChange={e=>setNewMemberForm(f=>({...f,display_name:e.target.value}))} className="form-input text-sm mb-2" placeholder="Alias / display name" />
+                      )}
+                      <select value={newMemberForm.visibility_preference} onChange={e=>setNewMemberForm(f=>({...f,visibility_preference:e.target.value}))} className="form-input text-sm bg-white">
+                        <option value="visible">Visible to all members</option>
+                        <option value="limited">Limited — admins only see details</option>
+                        <option value="hidden">Hidden — only admins know they exist</option>
+                      </select>
+                    </div>
+                  </div>
+                  {err && <div className="px-3 py-2 rounded-lg text-sm text-red-700 mt-3" style={{background:"#fef2f2"}}>{err}</div>}
+                  <p className="text-xs mt-2" style={{color:"var(--muted)"}}>A setup email will be sent so they can create their password.</p>
+                  <button disabled={newMemberBusy} className="btn-primary text-sm w-full mt-3">
+                    {newMemberBusy ? "Creating…" : "Create & add to group"}
+                  </button>
+                </form>
+              )}
               <p className="text-xs mt-3" style={{color:"var(--muted)"}}>To give an existing member a second payout slot, use the <b>+ Add slot</b> button on their row.</p>
-            </form>
+            </div>
           </div>
         )}
 
