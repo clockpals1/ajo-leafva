@@ -9,3 +9,4 @@ services:
         value: 3.11.0
       - key: PORT
         value: 10000
+# Force redeploy for slot position swap fix
