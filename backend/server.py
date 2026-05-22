@@ -2211,71 +2211,121 @@ async def _build_member_email_content(uid: str, email_type: str, brand: str, fe:
         return None
 
     first_name = user_doc["name"].split()[0]
+    total_overdue = sum(g["overdue"] for g in groups_data)
+    total_due_now  = sum(g["due_now"]  for g in groups_data)
+
+    # ── Short, specific subject / heading / default intro ─────────────────
     if email_type == "reminder":
-        subject = f"⏰ Ajo Contribution Reminder — {brand}"
-        heading = "Contribution Reminder"
-        default_intro = (
-            f"Hi {first_name}, this is your scheduled contribution reminder. "
-            "Please review your outstanding payments below and settle them before the due date to avoid late fees."
-        )
+        subject = f"⏰ Payment due — {brand}"
+        heading = "Payment Reminder"
+        overdue_groups = [g for g in groups_data if g["overdue"] > 0]
+        due_groups     = [g for g in groups_data if g["due_now"]  > 0]
+        if overdue_groups:
+            g0 = overdue_groups[0]
+            default_intro = (
+                f"Hi {first_name}, you have an overdue payment of "
+                f"<strong>&#8358;{g0['monthly']:,.0f}</strong> in <em>{g0['name']}</em>. "
+                "Settle now to avoid further late fees."
+            )
+        elif due_groups:
+            g0 = due_groups[0]
+            default_intro = (
+                f"Hi {first_name}, your <strong>&#8358;{g0['monthly']:,.0f}</strong> "
+                f"contribution to <em>{g0['name']}</em> is due. Please pay today."
+            )
+        else:
+            default_intro = (
+                f"Hi {first_name}, your upcoming Ajo contribution"
+                f"{'s are' if len(groups_data) > 1 else ' is'} listed below."
+            )
     else:
-        subject = f"📋 Your Ajo Group Summary — {brand}"
-        heading = "Your Ajo Summary"
+        subject = f"Your Ajo snapshot — {brand}"
+        heading = "Your Ajo Snapshot"
         default_intro = (
-            f"Hi {first_name}, here's a complete overview of your Ajo groups — your contributions, "
-            "payout schedule, and current standing across all active groups."
+            f"Hi {first_name}, here's your quick Ajo snapshot across "
+            f"{len(groups_data)} group{'s' if len(groups_data) != 1 else ''}."
         )
 
+    # ── AI intro — capped at 1 short sentence ─────────────────────────────
     if groq_key:
         ai_system = (
-            f"You are a warm, professional {brand} community finance assistant. "
-            f"Write a personalised email opening paragraph (2-4 sentences, no bullet points) for a '{email_type}' email. "
-            "Be encouraging, friendly, and specific to their situation. "
-            "Do NOT repeat the group table data that follows. End with a positive, motivating sentence."
+            f"You are a {brand} Ajo finance assistant. "
+            f"Write EXACTLY ONE short sentence (10–18 words) as an email opener for a '{email_type}' email. "
+            "Be direct and reference the specific amount or action needed. "
+            "No encouragement paragraphs. No fluff. Start with 'Hi [FirstName],'."
         )
         ai_user = (
-            f"Member name: {user_doc['name']}. "
-            f"Total groups: {len(groups_data)}. Total monthly: ₦{total_monthly:,.0f}.\n"
-            + "\n".join(ai_context_lines)
+            f"Name: {first_name}. Monthly: &#8358;{total_monthly:,.0f}. "
+            f"Groups: {len(groups_data)}. Overdue: {total_overdue}. "
+            + "; ".join(ai_context_lines[:2])
         )
         try:
-            ai_intro = await call_groq(groq_key, ai_system, ai_user, model)
+            raw_ai = await call_groq(groq_key, ai_system, ai_user, model)
+            ai_intro = raw_ai if len(raw_ai.split()) <= 40 else default_intro
         except Exception:
             ai_intro = default_intro
     else:
         ai_intro = default_intro
 
-    # ── Build beautiful HTML body ──────────────────────────────────────────
-    # Stats summary bar
-    total_overdue = sum(g["overdue"] for g in groups_data)
+    # ── Payout banner (green) — shown when member has upcoming payout ─────
+    payout_banner = ""
+    for gd in groups_data:
+        if gd["payout_cycles"]:
+            pc0 = gd["payout_cycles"][0]
+            slot_label = f"Slot #{gd['positions'][0]}" if gd["positions"] else "your slot"
+            payout_banner = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px">
+  <tr><td style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:14px 18px">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#15803d;margin-bottom:3px">&#127881; Payout coming</div>
+        <div style="font-size:20px;font-weight:800;color:#15803d;letter-spacing:-0.5px">&#8358;{gd['payout_total']:,.0f}</div>
+        <div style="font-size:11px;color:#166534;margin-top:3px">{gd['name']} &middot; {slot_label} &middot; Month {pc0['cycle_no']} &middot; {pc0['due_date']}</div>
+      </td>
+      <td align="right" style="font-size:32px;padding-left:8px">&#128176;</td>
+    </tr></table>
+  </td></tr>
+</table>"""
+            break
+
+    # ── Overdue / due-now banner ─────────────────────────────────────────
+    alert_banner = ""
+    if total_overdue > 0:
+        alert_banner = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px">
+  <tr><td style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:11px 16px">
+    <span style="font-size:13px;font-weight:700;color:#dc2626">&#9888; {total_overdue} overdue payment{'s' if total_overdue>1 else ''}</span>
+    <span style="font-size:12px;color:#b91c1c;margin-left:6px">— settle immediately to avoid extra late fees.</span>
+  </td></tr>
+</table>"""
+    elif total_due_now > 0:
+        alert_banner = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px">
+  <tr><td style="background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:11px 16px">
+    <span style="font-size:13px;font-weight:700;color:#92400e">&#9201; {total_due_now} payment{'s' if total_due_now>1 else ''} due now</span>
+    <span style="font-size:12px;color:#78350f;margin-left:6px">— please pay today.</span>
+  </td></tr>
+</table>"""
+
+    # ── Stats row (compact) ───────────────────────────────────────────────
     stats_html = f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
   <tr>
-    <td width="47%" style="background:#1E3F33;border-radius:10px;padding:16px 14px;text-align:center;vertical-align:top">
-      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.65);margin-bottom:5px">Monthly contribution</div>
-      <div style="font-size:22px;font-weight:700;color:#fff;letter-spacing:-0.5px">&#8358;{total_monthly:,.0f}</div>
+    <td width="50%" style="padding:14px 16px;border-right:1px solid #e5e7eb;text-align:center;vertical-align:top">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">Monthly due</div>
+      <div style="font-size:20px;font-weight:800;color:#1E3F33;letter-spacing:-0.5px">&#8358;{total_monthly:,.0f}</div>
     </td>
-    <td width="6%"></td>
-    <td width="47%" style="background:#f8f7f4;border:1px solid #e5e7eb;border-radius:10px;padding:16px 14px;text-align:center;vertical-align:top">
-      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:5px">Active groups</div>
-      <div style="font-size:22px;font-weight:700;color:#1E3F33;letter-spacing:-0.5px">{len(groups_data)}</div>
+    <td width="50%" style="padding:14px 16px;text-align:center;vertical-align:top">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">Active groups</div>
+      <div style="font-size:20px;font-weight:800;color:#111827">{len(groups_data)}</div>
     </td>
   </tr>
 </table>"""
 
-    if total_overdue > 0:
-        stats_html += f"""<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px">
-  <tr><td style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px">
-    <span style="font-size:13px;color:#dc2626;font-weight:600">&#9888; You have {total_overdue} overdue payment{'s' if total_overdue>1 else ''} — please settle before your next due date.</span>
-  </td></tr>
-</table>"""
+    # ── Short intro line ──────────────────────────────────────────────────
+    intro_html = f'<p style="font-size:14px;color:#374151;margin:0 0 16px;line-height:1.5">{ai_intro}</p>'
 
-    # AI intro paragraph
-    intro_html = f"""<p style="font-size:14px;line-height:1.75;color:#374151;margin:0 0 20px;padding:14px 16px;background:#f0f7f4;border-left:3px solid #1E3F33;border-radius:0 8px 8px 0">{ai_intro}</p>"""
-
-    divider = '<hr style="border:none;border-top:1px solid #eee;margin:6px 0 18px">'
-
-    # Group cards
+    # ── Compact group cards ───────────────────────────────────────────────
     cards_html = ""
     for gd in groups_data:
         slot_badges = "".join(
@@ -2283,82 +2333,69 @@ async def _build_member_email_content(uid: str, email_type: str, brand: str, fe:
             for p in gd["positions"]
         ) or '<span style="font-size:10px;color:#9ca3af">unassigned</span>'
 
-        payout_color = "#16a34a" if gd["payout_cycles"] else "#6b7280"
         paid_bar_pct = int((gd["paid"] / gd["total_cycles"]) * 100) if gd["total_cycles"] else 0
-
-        alert_row = ""
-        if gd["overdue"] > 0:
-            alert_row = (
-                f'<tr><td style="background:#fef2f2;padding:9px 16px;border-top:1px solid #fecaca">'
-                f'<span style="font-size:12px;color:#dc2626;font-weight:600">&#9888; {gd["overdue"]} overdue payment{"s" if gd["overdue"]>1 else ""}'
-                f' — settle immediately to avoid late fees</span></td></tr>'
-            )
-        elif gd["due_now"] > 0:
-            alert_row = (
-                f'<tr><td style="background:#fefce8;padding:9px 16px;border-top:1px solid #fde68a">'
-                f'<span style="font-size:12px;color:#92400e;font-weight:600">&#9201; {gd["due_now"]} payment{"s" if gd["due_now"]>1 else ""}'
-                f' due now — please pay today</span></td></tr>'
-            )
-
-        multi_slot_note = (
-            f'<div style="font-size:10px;color:#9ca3af;margin-top:2px">{len(gd["positions"])} slots &times; &#8358;{gd["contribution_amount"]:,.0f}</div>'
+        multi_note = (
+            f'<div style="font-size:10px;color:#9ca3af;margin-top:1px">'
+            f'{len(gd["positions"])} slots &times; &#8358;{gd["contribution_amount"]:,.0f}</div>'
             if len(gd["positions"]) > 1 else ""
+        )
+        payout_line = ""
+        if gd["payout_cycles"]:
+            pc0 = gd["payout_cycles"][0]
+            payout_line = (
+                f'<div style="font-size:11px;font-weight:700;color:#15803d;margin-top:6px">'
+                f'&#128176; Payout month: Month {pc0["cycle_no"]} &middot; {pc0["due_date"]}</div>'
+            )
+        status_color = "#dc2626" if gd["overdue"] > 0 else ("#d97706" if gd["due_now"] > 0 else "#16a34a")
+        status_icon  = "&#9888;" if gd["overdue"] > 0 else ("&#9201;" if gd["due_now"] > 0 else "&#10003;")
+        status_label = (
+            f'{gd["overdue"]} overdue' if gd["overdue"] > 0
+            else (f'{gd["due_now"]} due now' if gd["due_now"] > 0 else "up to date")
         )
 
         cards_html += f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
   <tr>
-    <td style="background:#f0f7f4;padding:12px 16px;border-bottom:1px solid #e5e7eb">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="font-size:14px;font-weight:700;color:#111827">{gd['name']}</td>
-          <td align="right" style="white-space:nowrap">{slot_badges}</td>
-        </tr>
-        <tr>
-          <td colspan="2" style="font-size:11px;color:#6b7280;padding-top:3px;text-transform:capitalize">
-            {gd['frequency']} &middot; {gd['total_cycles']} cycles &middot; {gd['paid']} paid
-            &middot; <span style="color:#{'dc2626' if gd['status']!='active' else '1E3F33'}">{gd['status']}</span>
-          </td>
-        </tr>
-      </table>
+    <td style="background:#f8f7f4;padding:10px 16px;border-bottom:1px solid #e5e7eb">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td style="font-size:13px;font-weight:700;color:#111827">{gd['name']}</td>
+        <td align="right">{slot_badges}</td>
+      </tr></table>
     </td>
   </tr>
   <tr>
-    <td style="padding:14px 16px">
+    <td style="padding:12px 16px">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td width="33%" style="border-right:1px solid #f3f4f6;padding-right:12px;vertical-align:top">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">Monthly due</div>
-            <div style="font-size:16px;font-weight:700;color:#111827">&#8358;{gd['monthly']:,.0f}</div>
-            {multi_slot_note}
+          <td width="33%" style="vertical-align:top;border-right:1px solid #f3f4f6;padding-right:10px">
+            <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:3px">Monthly</div>
+            <div style="font-size:16px;font-weight:800;color:#1E3F33">&#8358;{gd['monthly']:,.0f}</div>
+            {multi_note}
           </td>
-          <td width="33%" style="padding:0 12px;border-right:1px solid #f3f4f6;vertical-align:top">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">I receive</div>
-            <div style="font-size:16px;font-weight:700;color:#1E3F33">&#8358;{gd['payout_total']:,.0f}</div>
-            <div style="font-size:10px;color:#9ca3af;margin-top:2px">{gd['total_members']} members</div>
+          <td width="33%" style="vertical-align:top;padding:0 10px;border-right:1px solid #f3f4f6">
+            <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:3px">You receive</div>
+            <div style="font-size:16px;font-weight:800;color:#15803d">&#8358;{gd['payout_total']:,.0f}</div>
+            <div style="font-size:10px;color:#9ca3af;margin-top:1px">{gd['total_members']} members</div>
           </td>
-          <td width="34%" style="padding-left:12px;vertical-align:top">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">Payout month</div>
-            <div style="font-size:13px;font-weight:600;color:{payout_color}">{gd['payout_dates']}</div>
+          <td width="34%" style="vertical-align:top;padding-left:10px">
+            <div style="font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:3px">Progress</div>
+            <div style="font-size:15px;font-weight:800;color:#111827">{gd['paid']}<span style="font-size:12px;font-weight:400;color:#9ca3af">/{gd['total_cycles']}</span></div>
+            <div style="font-size:10px;color:#9ca3af;margin-top:1px;text-transform:capitalize">{gd['frequency']}</div>
           </td>
         </tr>
       </table>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px">
-        <tr>
-          <td style="font-size:10px;color:#9ca3af;padding-bottom:3px">Payment progress: {gd['paid']}/{gd['total_cycles']} cycles</td>
-        </tr>
-        <tr>
-          <td style="background:#f3f4f6;border-radius:99px;height:5px;overflow:hidden">
-            <div style="background:#1E3F33;height:5px;width:{paid_bar_pct}%;border-radius:99px"></div>
-          </td>
-        </tr>
+        <tr><td style="background:#f3f4f6;border-radius:99px;height:4px;overflow:hidden">
+          <div style="background:#1E3F33;height:4px;width:{paid_bar_pct}%;border-radius:99px"></div>
+        </td></tr>
       </table>
+      {payout_line}
+      <div style="font-size:11px;font-weight:600;color:{status_color};margin-top:7px">{status_icon} {status_label}</div>
     </td>
   </tr>
-  {alert_row}
 </table>"""
 
-    body_html = stats_html + intro_html + divider + cards_html
+    body_html = payout_banner + alert_banner + stats_html + intro_html + cards_html
     return {
         "subject": subject,
         "heading": heading,
