@@ -512,13 +512,18 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
         raise HTTPException(404, "User not found. Member must sign up first.")
     if user["role"] not in ("member", "admin", "super_admin"):
         raise HTTPException(400, "Invalid user")
-    existing = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
-    if existing and not data.payout_position:
-        raise HTTPException(400, "This member already has a slot. Specify a unique payout position to add another slot.")
     count = await db.group_members.count_documents({"group_id": group_id})
     if count >= group["member_limit"]:
         raise HTTPException(400, "Group member limit reached")
-    position = data.payout_position or (count + 1)
+    if data.payout_position:
+        position = data.payout_position
+    else:
+        # Auto-assign: find first gap in existing positions (keeps slots sequential)
+        all_existing = await db.group_members.find({"group_id": group_id}, {"payout_position": 1}).to_list(1000)
+        taken = set(m["payout_position"] for m in all_existing if m.get("payout_position") is not None)
+        position = 1
+        while position in taken:
+            position += 1
     # If position is taken, displace the existing member using a temp slot
     pos_taken = await db.group_members.find_one({"group_id": group_id, "payout_position": position})
     if pos_taken:
