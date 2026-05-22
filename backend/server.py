@@ -2059,9 +2059,7 @@ async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
                     meta={"scope": "all", "groups": len(groups), "members": len(sent)})
     return {"ok": True, "scope": "all", "groups": len(groups)}
 
-# ---------------- INCLUDE ROUTER ----------------
-app.include_router(api)
-
+# ---------------- MIDDLEWARE & LOGGING ----------------
 _raw_origins = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
@@ -2611,6 +2609,9 @@ async def member_my_summary(user=Depends(get_current_user)):
         "groups": sorted(groups_out, key=lambda x: x["group_name"]),
     }
 
+
+# Register all routes — must come AFTER all @api.* decorators are defined
+app.include_router(api)
 
 @app.on_event("shutdown")
 async def shutdown():
