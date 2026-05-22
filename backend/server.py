@@ -646,11 +646,12 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
                 {"group_id": group_id, "user_id": conflict["user_id"]},
                 {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
             )
-        # Clear old cycle assignment for this member (unless already paid out)
-        await db.cycles.update_one(
-            {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
-            {"$set": {"payout_user_id": None}}
-        )
+        else:
+            # No conflict: clear old cycle assignment for this member (unless already paid out)
+            await db.cycles.update_one(
+                {"group_id": group_id, "cycle_no": old_position, "payout_status": {"$ne": "completed"}},
+                {"$set": {"payout_user_id": None}}
+            )
         # Assign new cycle to this user
         new_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": new_position})
         if new_cycle and new_cycle.get("payout_status") != "completed":
