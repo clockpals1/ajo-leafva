@@ -639,11 +639,15 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
         if conflict and conflict["id"] != member_id:
             # Find the next available position for the conflicting member
             all_positions = await db.group_members.find({"group_id": group_id}).to_list(1000)
-            used_positions = set(m["payout_position"] for m in all_positions if m["id"] != conflict["id"])
+            used_positions = set(m["payout_position"] for m in all_positions if m["id"] != conflict["id"] and m["id"] != member_id)
             next_pos = 1
             while next_pos in used_positions:
                 next_pos += 1
-            # Move the conflicting member to the next available position
+            # Transactional swap: first clear conflict's position to free up the slot
+            await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": None}})
+            # Now update this member to the new position
+            await db.group_members.update_one({"id": member_id}, {"$set": {"payout_position": new_position}})
+            # Then move the conflict to the next available position
             await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": next_pos}})
             # Update cycle assignments for the swapped member
             old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": old_position})
@@ -660,6 +664,8 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
                 {"group_id": group_id, "user_id": conflict["user_id"]},
                 {"$set": {"expected_amount": per_cycle_due, "updated_at": now_utc().isoformat()}}
             )
+            # Skip the final update since we already did it
+            update.pop("payout_position", None)
         else:
             # No conflict: clear old cycle assignment for this member (unless already paid out)
             await db.cycles.update_one(
