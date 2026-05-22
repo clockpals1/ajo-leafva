@@ -522,8 +522,13 @@ async def add_member(group_id: str, data: AddMember, admin=Depends(require_admin
     # If position is taken, swap with the existing member
     pos_taken = await db.group_members.find_one({"group_id": group_id, "payout_position": position})
     if pos_taken:
-        # Swap: move the existing member to the next available position
-        next_pos = count + 1
+        # Find the next available position for the conflicting member
+        all_positions = await db.group_members.find({"group_id": group_id}).to_list(1000)
+        used_positions = set(m["payout_position"] for m in all_positions if m["id"] != pos_taken["id"])
+        next_pos = 1
+        while next_pos in used_positions:
+            next_pos += 1
+        # Move the existing member to the next available position
         await db.group_members.update_one({"id": pos_taken["id"]}, {"$set": {"payout_position": next_pos}})
         # Update cycle assignment for the swapped member
         old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": position})
@@ -632,12 +637,21 @@ async def update_member(group_id: str, member_id: str, data: UpdateMemberIn, adm
         # Check if new position is taken by another member
         conflict = await db.group_members.find_one({"group_id": group_id, "payout_position": new_position})
         if conflict and conflict["id"] != member_id:
-            # Swap positions: move the conflicting member to the old position
-            await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": old_position}})
+            # Find the next available position for the conflicting member
+            all_positions = await db.group_members.find({"group_id": group_id}).to_list(1000)
+            used_positions = set(m["payout_position"] for m in all_positions if m["id"] != conflict["id"])
+            next_pos = 1
+            while next_pos in used_positions:
+                next_pos += 1
+            # Move the conflicting member to the next available position
+            await db.group_members.update_one({"id": conflict["id"]}, {"$set": {"payout_position": next_pos}})
             # Update cycle assignments for the swapped member
             old_cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": old_position})
             if old_cycle and old_cycle.get("payout_status") != "completed":
                 await db.cycles.update_one({"id": old_cycle["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
+            new_cycle_for_conflict = await db.cycles.find_one({"group_id": group_id, "cycle_no": next_pos})
+            if new_cycle_for_conflict and new_cycle_for_conflict.get("payout_status") != "completed":
+                await db.cycles.update_one({"id": new_cycle_for_conflict["id"]}, {"$set": {"payout_user_id": conflict["user_id"]}})
             # Recalculate expected_amount for the swapped member (in case they have multiple slots)
             conflict_slots = await db.group_members.count_documents({"group_id": group_id, "user_id": conflict["user_id"]})
             grp = await db.groups.find_one({"id": group_id}, {"_id": 0, "contribution_amount": 1})
@@ -1069,8 +1083,13 @@ async def provision_user(data: AdminProvisionUser, admin=Depends(require_admin))
         position = data.payout_position or (count + 1)
         pos_taken = await db.group_members.find_one({"group_id": data.group_id, "payout_position": position})
         if pos_taken:
-            # Swap: move the existing member to the next available position
-            next_pos = count + 1
+            # Find the next available position for the conflicting member
+            all_positions = await db.group_members.find({"group_id": data.group_id}).to_list(1000)
+            used_positions = set(m["payout_position"] for m in all_positions if m["id"] != pos_taken["id"])
+            next_pos = 1
+            while next_pos in used_positions:
+                next_pos += 1
+            # Move the existing member to the next available position
             await db.group_members.update_one({"id": pos_taken["id"]}, {"$set": {"payout_position": next_pos}})
             # Update cycle assignment for the swapped member
             old_cycle = await db.cycles.find_one({"group_id": data.group_id, "cycle_no": position})
