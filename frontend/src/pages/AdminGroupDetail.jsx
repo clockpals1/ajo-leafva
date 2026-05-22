@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X, Plus } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X, Plus, CalendarDays, RefreshCcw, AlertTriangle } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -72,6 +72,9 @@ export default function AdminGroupDetail() {
   const [addSlotErr, setAddSlotErr] = useState("");
   const [editingDueDate, setEditingDueDate] = useState({}); // { cycle_id: draft_date }
   const [reconciling, setReconciling] = useState(false);
+  const [recalcBusy, setRecalcBusy] = useState(false);
+  const [recalcMsg, setRecalcMsg] = useState("");
+  const [recalcConfirm, setRecalcConfirm] = useState(false);
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -108,7 +111,20 @@ export default function AdminGroupDetail() {
       setSaveMsg("Saved!");
       load();
     } catch (e) { setSaveMsg(formatErr(e?.response?.data?.detail) || "Failed"); }
-    finally { setSaving(false); setTimeout(() => setSaveMsg(""), 3000); }
+    finally { setSaving(false); }
+  };
+
+  const runRecalculate = async () => {
+    setRecalcBusy(true); setRecalcMsg(""); setRecalcConfirm(false);
+    try {
+      const payload = {};
+      if (editData.start_date) payload.start_date = editData.start_date;
+      if (editData.due_day) payload.due_day = Number(editData.due_day);
+      const { data: res } = await api.post(`/admin/groups/${id}/recalculate-dates`, payload);
+      setRecalcMsg(res.message || `Updated ${res.updated} cycle(s).`);
+      load();
+    } catch (e) { setRecalcMsg(formatErr(e?.response?.data?.detail) || "Recalculation failed."); }
+    finally { setRecalcBusy(false); }
   };
 
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="page-main">Loading...</div></div>;
@@ -784,13 +800,18 @@ export default function AdminGroupDetail() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="form-label">Due day</label>
-                  <input type="number" min={1} max={31} value={editData.due_day||1} onChange={e=>setField("due_day",Number(e.target.value))} className="form-input"/>
+                  <label className="form-label">Due day <span className="font-normal text-xs" style={{color:"var(--muted)"}}>day of month</span></label>
+                  <input type="number" min={1} max={28} value={editData.due_day||1} onChange={e=>setField("due_day",Number(e.target.value))} className="form-input"/>
                 </div>
                 <div>
                   <label className="form-label">Due time</label>
                   <input type="time" value={editData.due_time||"23:59"} onChange={e=>setField("due_time",e.target.value)} className="form-input"/>
                 </div>
+              </div>
+              <div>
+                <label className="form-label">Group start date</label>
+                <input type="date" value={editData.start_date||""} onChange={e=>setField("start_date",e.target.value)} className="form-input"/>
+                <p className="text-xs mt-1" style={{color:"var(--muted)"}}>Changing start date or due day here only saves the group settings. Use <strong>Recalculate Dates</strong> below to push the change to all pending cycle due dates.</p>
               </div>
             </div>
 
@@ -857,6 +878,69 @@ export default function AdminGroupDetail() {
                 {saveMsg && <span className="text-sm" style={{color: saveMsg==="Saved!" ? "var(--primary)" : "#b91c1c"}}>{saveMsg}</span>}
               </div>
             </div>
+
+            {/* ── Recalculate Dates card ── */}
+            <div className="col-span-full">
+              <div className="card-tactile p-4 sm:p-6 space-y-3" style={{borderLeft:"3px solid var(--primary)"}}>
+                <div className="flex items-center gap-2">
+                  <CalendarDays size={16} style={{color:"var(--primary)"}}/>
+                  <h3 className="font-display text-base">Recalculate Cycle Due Dates</h3>
+                </div>
+                <p className="text-xs leading-relaxed" style={{color:"var(--muted)"}}>
+                  After changing <strong>Start Date</strong>, <strong>Due Day</strong>, or <strong>Frequency</strong>, use this to push
+                  the updated schedule to all <em>pending</em> (non-completed) cycle due dates.
+                  Completed payouts are never touched.
+                </p>
+                <div className="rounded-lg px-4 py-3 text-xs space-y-1" style={{background:"var(--surface)"}}>
+                  <div className="flex gap-6 flex-wrap">
+                    <div><span style={{color:"var(--muted)"}}>Current start date: </span><strong>{group.start_date}</strong></div>
+                    <div><span style={{color:"var(--muted)"}}>Due day: </span><strong>{group.due_day}</strong></div>
+                    <div><span style={{color:"var(--muted)"}}>Frequency: </span><strong className="capitalize">{group.frequency}</strong></div>
+                  </div>
+                  <div style={{color:"var(--muted)"}}>
+                    Will apply: start <strong>{editData.start_date||group.start_date}</strong>, day&nbsp;
+                    <strong>{editData.due_day||group.due_day}</strong>
+                    {(editData.start_date !== group.start_date || editData.due_day !== group.due_day) && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded text-xs font-medium" style={{background:"#fef3c7",color:"#92400e"}}>
+                        unsaved change detected
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {!recalcConfirm ? (
+                  <button onClick={()=>setRecalcConfirm(true)}
+                    className="btn-secondary text-sm inline-flex items-center gap-2">
+                    <RefreshCcw size={14}/> Preview &amp; apply new schedule
+                  </button>
+                ) : (
+                  <div className="rounded-lg p-3 space-y-3" style={{background:"#fef3c7",border:"1px solid #fde68a"}}>
+                    <div className="flex items-start gap-2 text-sm">
+                      <AlertTriangle size={15} style={{color:"#d97706",flexShrink:0,marginTop:1}}/>
+                      <span style={{color:"#92400e"}}>
+                        This will recalculate due dates for <strong>all pending cycles</strong> based on
+                        start date <strong>{editData.start_date||group.start_date}</strong> and
+                        due day <strong>{editData.due_day||group.due_day}</strong>.
+                        Make sure you have saved your changes first.
+                      </span>
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={()=>setRecalcConfirm(false)} className="btn-secondary text-sm">Cancel</button>
+                      <button onClick={runRecalculate} disabled={recalcBusy}
+                        className="btn-primary text-sm inline-flex items-center gap-2">
+                        {recalcBusy ? <><RefreshCcw size={13} className="animate-spin"/> Recalculating…</> : <><RefreshCcw size={13}/> Confirm &amp; recalculate</>}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {recalcMsg && (
+                  <p className="text-sm font-medium" style={{color: recalcMsg.includes("fail") || recalcMsg.includes("error") ? "#b91c1c" : "var(--primary)"}}>
+                    {recalcMsg}
+                  </p>
+                )}
+              </div>
+            </div>
+
           </div>
         )}
       </main>

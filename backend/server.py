@@ -128,6 +128,7 @@ class GroupUpdate(BaseModel):
     description: Optional[str] = None
     contribution_amount: Optional[float] = None
     frequency: Optional[Literal["monthly", "weekly", "biweekly"]] = None
+    start_date: Optional[str] = None  # YYYY-MM-DD — changing this does NOT auto-recalculate cycles; use /recalculate-dates
     total_cycles: Optional[int] = None
     member_limit: Optional[int] = None
     due_day: Optional[int] = None
@@ -316,6 +317,19 @@ def _add_period(start: date, frequency: str, n: int) -> date:
     day = min(start.day, 28)
     return date(year, month, day)
 
+def _add_period_with_day(start: date, frequency: str, n: int, due_day: int) -> date:
+    """Like _add_period but uses explicit due_day for the day-of-month in monthly cycles."""
+    if frequency == "weekly":
+        return start + timedelta(weeks=n)
+    if frequency == "biweekly":
+        return start + timedelta(weeks=2*n)
+    # monthly — honour due_day
+    month = start.month - 1 + n
+    year = start.year + month // 12
+    month = month % 12 + 1
+    day = min(due_day, 28)
+    return date(year, month, day)
+
 @api.post("/admin/groups")
 async def create_group(data: GroupCreate, admin=Depends(require_admin)):
     gid = str(uuid.uuid4())
@@ -488,6 +502,68 @@ async def update_cycle(group_id: str, cycle_id: str, data: CycleUpdate, admin=De
                     meta={"cycle_id": cycle_id, "due_date": data.due_date})
     updated = await db.cycles.find_one({"id": cycle_id}, {"_id": 0})
     return updated
+
+class RecalculateDatesIn(BaseModel):
+    start_date: Optional[str] = None   # YYYY-MM-DD; if omitted, use current group start_date
+    due_day: Optional[int] = None      # day-of-month; if omitted, use current group due_day
+
+@api.post("/admin/groups/{group_id}/recalculate-dates")
+async def recalculate_group_dates(group_id: str, data: RecalculateDatesIn, admin=Depends(require_admin)):
+    """Recalculate due_dates for all non-completed cycles using the group's start_date, frequency and due_day.
+    Only updates cycles whose payout_status is not 'completed'. Safe to call after changing start_date or due_day."""
+    g = await db.groups.find_one({"id": group_id})
+    if not g:
+        raise HTTPException(404, "Group not found")
+
+    start_str = data.start_date or g.get("start_date")
+    if not start_str:
+        raise HTTPException(400, "Group has no start_date set.")
+    try:
+        start = date.fromisoformat(start_str)
+    except ValueError:
+        raise HTTPException(400, "Invalid start_date format — use YYYY-MM-DD.")
+
+    freq = g.get("frequency", "monthly")
+    due_day = data.due_day or g.get("due_day") or start.day
+    today_d = now_utc().date()
+
+    pending_cycles = await db.cycles.find(
+        {"group_id": group_id, "payout_status": {"$ne": "completed"}},
+        {"_id": 0}
+    ).sort("cycle_no", 1).to_list(1000)
+
+    if not pending_cycles:
+        return {"ok": True, "updated": 0, "message": "No pending cycles to update."}
+
+    updated = 0
+    for c in pending_cycles:
+        n = c["cycle_no"] - 1  # 0-indexed offset from start
+        new_due = _add_period_with_day(start, freq, n, due_day)
+        new_due_str = new_due.isoformat()
+        if new_due_str != c.get("due_date"):
+            new_status = "Due" if new_due <= today_d else "Not_Due"
+            await db.cycles.update_one({"id": c["id"]}, {"$set": {"due_date": new_due_str}})
+            # Cascade to member_cycle_status rows that are still pending
+            await db.member_cycle_status.update_many(
+                {"group_id": group_id, "cycle_no": c["cycle_no"], "status": {"$in": ["Due", "Not_Due"]}},
+                {"$set": {"status": new_status, "updated_at": now_utc().isoformat()}}
+            )
+            updated += 1
+
+    # Persist updated start_date and/or due_day to the group document
+    group_patch = {}
+    if data.start_date and data.start_date != g.get("start_date"):
+        group_patch["start_date"] = data.start_date
+    if data.due_day and data.due_day != g.get("due_day"):
+        group_patch["due_day"] = data.due_day
+    if group_patch:
+        await db.groups.update_one({"id": group_id}, {"$set": group_patch})
+
+    await log_audit(admin["id"], "cycle_dates_recalculated", target=group_id,
+                    meta={"start_date": start_str, "due_day": due_day, "updated": updated})
+    return {"ok": True, "updated": updated,
+            "message": f"Updated {updated} pending cycle date{'s' if updated != 1 else ''}."}
+
 
 @api.delete("/admin/groups/{group_id}")
 async def delete_group(group_id: str, admin=Depends(require_admin)):
