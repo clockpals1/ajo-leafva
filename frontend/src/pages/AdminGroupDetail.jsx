@@ -334,7 +334,7 @@ export default function AdminGroupDetail() {
                       </div>
                       <div className="space-y-1.5 mb-2">
                         {slots.map(s => {
-                          const pc = cycles.find(c=>c.payout_user_id===s.user_id && c.cycle_no===s.payout_position);
+                          const pc = cycles.find(c=>c.cycle_no===s.payout_position);
                           return (
                             <div key={s.id} className="flex items-center gap-2 flex-wrap">
                               {editingPos[s.id] !== undefined ? (
@@ -386,7 +386,7 @@ export default function AdminGroupDetail() {
                       <td className="px-4 py-3">
                         <div className="space-y-1.5">
                           {slots.map(s => {
-                            const pc = cycles.find(c=>c.payout_user_id===s.user_id && c.cycle_no===s.payout_position);
+                            const pc = cycles.find(c=>c.cycle_no===s.payout_position);
                             return (
                               <div key={s.id} className="flex items-center gap-2">
                                 {editingPos[s.id] !== undefined ? (
@@ -637,9 +637,9 @@ export default function AdminGroupDetail() {
             {/* Mobile payout cards */}
             <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
               {cycles.map(c => {
-                // Validate: recipient must have a slot at exactly this cycle_no (position)
-                const recipient = members.find(m => m.user_id === c.payout_user_id && m.payout_position === c.cycle_no);
-                const recUser = userMap[c.payout_user_id];
+                // Recipient: the member whose payout_position matches this cycle_no
+                const recipient = members.find(m => m.payout_position === c.cycle_no);
+                const recUser = recipient ? userMap[recipient.user_id] : null;
                 const bankStr = recUser?.bank_account_number
                   ? `${recUser.bank_name} — ${recUser.bank_account_number} (${recUser.bank_account_name})`
                   : null;
@@ -673,7 +673,7 @@ export default function AdminGroupDetail() {
                         <button onClick={()=>copyText(bankStr)} title="Copy" className="opacity-50 shrink-0"><Copy size={10}/></button>
                       </div>
                     ) : <div className="text-xs mt-1" style={{color:"var(--muted)"}}>No bank on file</div>}
-                    {c.payout_status !== "completed" && c.payout_user_id && (
+                    {c.payout_status !== "completed" && recipient && (
                       <button onClick={()=>confirmPayout(c.cycle_no)} className="btn-primary w-full !py-2.5 text-sm inline-flex items-center justify-center gap-1 mt-3" data-testid={`payout-${c.cycle_no}`}>
                         <Check size={14}/> Confirm payout
                       </button>
@@ -694,9 +694,9 @@ export default function AdminGroupDetail() {
               </tr></thead>
               <tbody>
                 {cycles.map(c => {
-                  // Validate: recipient must have a slot at exactly this cycle_no (position)
-                  const recipient = members.find(m => m.user_id === c.payout_user_id && m.payout_position === c.cycle_no);
-                  const recUser = recipient ? userMap[c.payout_user_id] : null;
+                  // Recipient: the member whose payout_position matches this cycle_no
+                  const recipient = members.find(m => m.payout_position === c.cycle_no);
+                  const recUser = recipient ? userMap[recipient.user_id] : null;
                   const bankStr = recUser?.bank_account_number
                     ? `${recUser.bank_name} — ${recUser.bank_account_number} (${recUser.bank_account_name})`
                     : null;
@@ -735,7 +735,7 @@ export default function AdminGroupDetail() {
                         <span className={`badge ${c.payout_status==="completed"?"s-Payout_Completed":"s-Payout_Eligible"}`}>{c.payout_status}</span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {c.payout_status !== "completed" && c.payout_user_id && (
+                        {c.payout_status !== "completed" && recipient && (
                           <button onClick={()=>confirmPayout(c.cycle_no)} className="btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1" data-testid={`payout-${c.cycle_no}`}>
                             <Check size={12}/> Confirm payout
                           </button>

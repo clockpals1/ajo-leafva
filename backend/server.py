@@ -394,6 +394,7 @@ async def get_group_admin(group_id: str, admin=Depends(require_admin)):
     g = await db.groups.find_one({"id": group_id}, {"_id": 0})
     if not g:
         raise HTTPException(404, "Group not found")
+    await _sync_cycle_payouts(group_id)  # keep payout_user_id in sync
     members = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
     return {"group": g, "members": members, "cycles": cycles}
@@ -994,11 +995,12 @@ async def decide_payment(payment_id: str, data: DecisionIn, admin=Depends(requir
 # ---------------- PAYOUTS ----------------
 @api.post("/admin/payouts/{group_id}/{cycle_no}/confirm")
 async def confirm_payout(group_id: str, cycle_no: int, admin=Depends(require_admin)):
+    await _sync_cycle_payouts(group_id)  # ensure payout_user_id is fresh before confirming
     cycle = await db.cycles.find_one({"group_id": group_id, "cycle_no": cycle_no})
     if not cycle:
         raise HTTPException(404, "Cycle not found")
     if not cycle.get("payout_user_id"):
-        raise HTTPException(400, "No payout recipient assigned")
+        raise HTTPException(400, "No payout recipient assigned for this slot")
     await db.cycles.update_one({"id": cycle["id"]}, {"$set": {
         "payout_status": "completed",
         "payout_confirmed_at": now_utc().isoformat(),
@@ -1062,6 +1064,7 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
     is_member = await db.group_members.find_one({"group_id": group_id, "user_id": user["id"]})
     if not is_admin and not is_member:
         raise HTTPException(403, "Not a member of this group")
+    await _sync_cycle_payouts(group_id)  # keep payout_user_id consistent before serving
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
     members_raw = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
     members = [m for m in members_raw if m.get("payout_position") is not None]
@@ -1086,6 +1089,24 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
     else:
         my_status = await db.member_cycle_status.find({"group_id": group_id, "user_id": user["id"]}, {"_id": 0}).to_list(1000)
     return {"group": g, "cycles": cycles, "members": members, "statuses": my_status}
+
+# ── Helper: keep cycles.payout_user_id in sync with group_members.payout_position ──
+async def _sync_cycle_payouts(gid: str):
+    """Sync payout_user_id on all pending cycles to match group_members.payout_position.
+    The authoritative source is payout_position; payout_user_id is derived from it."""
+    members_list = await db.group_members.find(
+        {"group_id": gid, "payout_position": {"$ne": None}},
+        {"_id": 0, "user_id": 1, "payout_position": 1}
+    ).to_list(1000)
+    pos_to_uid = {m["payout_position"]: m["user_id"] for m in members_list}
+    cycles_list = await db.cycles.find(
+        {"group_id": gid, "payout_status": {"$ne": "completed"}},
+        {"_id": 0, "id": 1, "cycle_no": 1, "payout_user_id": 1}
+    ).to_list(1000)
+    for c in cycles_list:
+        expected = pos_to_uid.get(c["cycle_no"])  # None if no member owns this slot
+        if c.get("payout_user_id") != expected:
+            await db.cycles.update_one({"id": c["id"]}, {"$set": {"payout_user_id": expected}})
 
 # ---------------- RECONCILE CYCLE PAYOUTS ----------------
 @api.post("/admin/reconcile-cycle-payouts")
@@ -2182,9 +2203,9 @@ async def _build_member_email_content(uid: str, email_type: str, brand: str, fe:
         payout_total = g["contribution_amount"] * total_members
         total_monthly += monthly
         payout_cycles = await db.cycles.find(
-            {"group_id": gid, "payout_user_id": uid, "payout_status": {"$ne": "completed"}},
-            {"cycle_no": 1, "due_date": 1}
-        ).to_list(20)
+            {"group_id": gid, "cycle_no": {"$in": positions}, "payout_status": {"$ne": "completed"}},
+            {"_id": 0, "cycle_no": 1, "due_date": 1}
+        ).sort("cycle_no", 1).to_list(20) if positions else []
         payout_dates_text = ", ".join(
             f"Month {c['cycle_no']} ({c['due_date'][:7]})" for c in payout_cycles
         ) or "Not yet assigned"
@@ -2606,9 +2627,9 @@ async def member_my_summary(user=Depends(get_current_user)):
         total_monthly += monthly_due
 
         payout_cycles = await db.cycles.find(
-            {"group_id": gid, "payout_user_id": user["id"], "payout_status": {"$ne": "completed"}},
+            {"group_id": gid, "cycle_no": {"$in": positions}, "payout_status": {"$ne": "completed"}},
             {"_id": 0, "cycle_no": 1, "due_date": 1}
-        ).to_list(20)
+        ).sort("cycle_no", 1).to_list(20) if positions else []
 
         statuses = await db.member_cycle_status.find({"group_id": gid, "user_id": user["id"]}, {"_id": 0}).to_list(500)
         paid = sum(1 for st in statuses if st["status"] in ("Approved", "Paid", "Payout_Completed"))

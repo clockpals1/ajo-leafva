@@ -51,7 +51,7 @@ export default function GroupDetail() {
   const statusByCycle = Object.fromEntries(myStatuses.map(s => [s.cycle_no, s]));
   const mySlots = members.filter(m => m.user_id === user.id).sort((a,b) => a.payout_position - b.payout_position);
   const mySlotPositions = new Set(mySlots.map(s => s.payout_position));
-  const myPayoutCycles = cycles.filter(c => c.payout_user_id === user.id && mySlotPositions.has(c.cycle_no));
+  const myPayoutCycles = cycles.filter(c => mySlotPositions.has(c.cycle_no));
   // Per-cycle obligation = contribution × my slot count (backend keeps this in status.expected_amount)
   const myMonthlyDue = group.contribution_amount * (mySlots.length || 1);
   // What I receive per payout = contribution × total slots in group
@@ -350,7 +350,7 @@ export default function GroupDetail() {
               {membersByUser.map(m => {
                 const isMe = m.user_id === user.id;
                 const payoutDates = m.slots.map(pos => {
-                  const c = cycles.find(cy => cy.payout_user_id === m.user_id && cy.cycle_no === pos);
+                  const c = cycles.find(cy => cy.cycle_no === pos);
                   return c ? fmtDate(c.due_date) : null;
                 }).filter(Boolean);
                 return (
