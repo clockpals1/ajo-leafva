@@ -94,32 +94,76 @@ export default function AdminSettings() {
 
       {/* ── Email Preview Modal ── */}
       {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,0.55)"}} onClick={()=>setPreview(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={e=>e.stopPropagation()}>
-            <div className="flex items-start justify-between px-5 py-4 border-b" style={{borderColor:"var(--border)"}}>
-              <div>
-                <h3 className="font-display text-lg">Email Preview</h3>
-                <p className="text-xs mt-0.5" style={{color:"var(--muted)"}}>
-                  Sample for: <strong>{preview.recipient_name}</strong> ({preview.recipient_email})
-                </p>
+        <div className="fixed inset-0 z-50 flex flex-col" style={{background:"rgba(15,23,42,0.75)"}}>
+          {/* Top bar — email client chrome */}
+          <div className="flex-shrink-0 flex items-center justify-between px-5 py-3"
+            style={{background:"#1e293b",color:"#fff"}}>
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                style={{background:"rgba(255,255,255,0.12)"}}>
+                <Send size={13}/>
               </div>
-              <button onClick={()=>setPreview(null)} className="p-2 rounded-lg hover:bg-gray-100 -mt-1 -mr-1">
-                <ChevronUp size={18}/>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold truncate">Email Preview
+                  <span className="font-normal opacity-60 ml-2">— sample for {preview.recipient_name}</span>
+                </div>
+                <div className="text-xs opacity-50 truncate">{preview.recipient_email}</div>
+              </div>
+            </div>
+            <button onClick={()=>setPreview(null)}
+              className="ml-4 flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg"
+              style={{background:"rgba(255,255,255,0.1)"}}>
+              <ChevronUp size={14}/>
+            </button>
+          </div>
+
+          {/* Subject / meta bar */}
+          <div className="flex-shrink-0 px-5 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs border-b"
+            style={{background:"#f8fafc",borderColor:"#e2e8f0"}}>
+            <div>
+              <span className="text-gray-400 mr-1.5">To</span>
+              <span className="font-medium text-gray-700">{preview.recipient_name} &lt;{preview.recipient_email}&gt;</span>
+            </div>
+            <div>
+              <span className="text-gray-400 mr-1.5">Subject</span>
+              <span className="font-semibold text-gray-800">{preview.subject}</span>
+            </div>
+            <div className="ml-auto flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full border border-amber-200 font-medium">
+              <AlertTriangle size={11}/> Preview only — not sent yet
+            </div>
+          </div>
+
+          {/* Email body in iframe */}
+          <div className="flex-1 overflow-hidden bg-gray-100 px-4 py-4">
+            <div className="h-full max-w-2xl mx-auto rounded-xl overflow-hidden shadow-2xl">
+              {preview.full_html ? (
+                <iframe
+                  srcDoc={preview.full_html}
+                  title="Email preview"
+                  style={{width:"100%", height:"100%", border:"none", display:"block"}}
+                  sandbox="allow-same-origin"
+                />
+              ) : (
+                <div className="bg-white h-full overflow-y-auto p-6 text-sm leading-relaxed text-gray-700"
+                  dangerouslySetInnerHTML={{__html: preview.body_html}} />
+              )}
+            </div>
+          </div>
+
+          {/* Bottom action bar */}
+          <div className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-t"
+            style={{background:"#fff",borderColor:"#e2e8f0"}}>
+            <p className="text-xs text-gray-500">
+              This is a sample based on <strong>{preview.recipient_name}</strong>'s data.
+              Every member gets a personalised version.
+            </p>
+            <div className="flex gap-3 flex-shrink-0 ml-4">
+              <button onClick={()=>setPreview(null)} className="btn-secondary text-sm">
+                Edit settings
               </button>
-            </div>
-            <div className="px-5 py-3 border-b flex gap-6 text-xs" style={{borderColor:"var(--border)",background:"var(--surface)"}}>
-              <div><span style={{color:"var(--muted)"}}>Subject:</span> <strong>{preview.subject}</strong></div>
-            </div>
-            <div className="overflow-y-auto flex-1 p-5">
-              <div className="text-sm font-semibold mb-2" style={{color:"var(--primary)"}}>{preview.heading}</div>
-              <div className="text-sm leading-relaxed" style={{color:"#374151"}}
-                dangerouslySetInnerHTML={{__html: preview.body_html}} />
-            </div>
-            <div className="px-5 py-3 border-t flex justify-end gap-3" style={{borderColor:"var(--border)"}}>
-              <button onClick={()=>setPreview(null)} className="btn-secondary text-sm">Close</button>
               <button onClick={()=>{ setPreview(null); sendAiEmails(); }} disabled={aiEmailBusy}
                 className="btn-primary text-sm inline-flex items-center gap-2">
-                <Send size={14}/> Looks good — send
+                {aiEmailBusy ? <><Loader2 size={14} className="animate-spin"/> Sending…</> : <><Send size={14}/> Looks good — send all</>}
               </button>
             </div>
           </div>

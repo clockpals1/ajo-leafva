@@ -17,7 +17,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Respons
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-from email_service import send_email, send_email_with_error
+from email_service import send_email, send_email_with_error, _wrap as _email_wrap
 from twilio_service import send_whatsapp
 
 # ---------------- DB & APP ----------------
@@ -2050,7 +2050,7 @@ async def startup():
     await db.group_comments.create_index([("group_id", 1), ("created_at", -1)])
 
 async def _build_member_email_content(uid: str, email_type: str, brand: str, fe: str, groq_key: str, model: str) -> dict | None:
-    """Shared logic: build email content for one member without sending."""
+    """Shared logic: build beautiful email content for one member without sending."""
     user_doc = await db.users.find_one({"id": uid}, {"_id": 0})
     if not user_doc or not user_doc.get("email"):
         return None
@@ -2058,7 +2058,9 @@ async def _build_member_email_content(uid: str, email_type: str, brand: str, fe:
     if not memberships:
         return None
 
-    group_lines, total_monthly, seen = [], 0.0, set()
+    groups_data, total_monthly, seen = [], 0.0, set()
+    ai_context_lines = []
+
     for mem in memberships:
         gid = mem["group_id"]
         if gid in seen:
@@ -2069,67 +2071,196 @@ async def _build_member_email_content(uid: str, email_type: str, brand: str, fe:
             continue
         slots = await db.group_members.find({"group_id": gid, "user_id": uid}).to_list(10)
         positions = sorted([s["payout_position"] for s in slots if s.get("payout_position") is not None])
-        if not positions:
-            continue
-        total_members = await db.group_members.count_documents({"group_id": gid, "payout_position": {"$ne": None}})
-        monthly = g["contribution_amount"] * len(positions)
+        total_members = await db.group_members.count_documents({"group_id": gid})
+        monthly = g["contribution_amount"] * max(len(positions), 1)
         payout_total = g["contribution_amount"] * total_members
         total_monthly += monthly
         payout_cycles = await db.cycles.find(
             {"group_id": gid, "payout_user_id": uid, "payout_status": {"$ne": "completed"}},
             {"cycle_no": 1, "due_date": 1}
         ).to_list(20)
-        payout_dates = ", ".join(f"Month {c['cycle_no']} ({c['due_date'][:10]})" for c in payout_cycles) or "Not yet assigned"
+        payout_dates_text = ", ".join(
+            f"Month {c['cycle_no']} ({c['due_date'][:7]})" for c in payout_cycles
+        ) or "Not yet assigned"
         statuses = await db.member_cycle_status.find({"group_id": gid, "user_id": uid}).to_list(200)
         overdue = sum(1 for st in statuses if st["status"] == "Overdue")
         due_now = sum(1 for st in statuses if st["status"] == "Due")
-        group_lines.append(
-            f"• {g['name']}: Slot(s) #{','.join(str(p) for p in positions)} | "
-            f"Monthly: ₦{monthly:,.0f} | Payout: ₦{payout_total:,.0f} | "
-            f"Payout month: {payout_dates}" +
-            (f" | ⚠ {overdue} overdue" if overdue else "") +
-            (f" | {due_now} due now" if due_now else "")
+        paid = sum(1 for st in statuses if st["status"] in ("Approved", "Paid", "Payout_Completed"))
+
+        groups_data.append({
+            "name": g["name"], "frequency": g["frequency"], "status": g.get("status", "active"),
+            "total_cycles": g["total_cycles"], "contribution_amount": g["contribution_amount"],
+            "positions": positions, "total_members": total_members,
+            "monthly": monthly, "payout_total": payout_total,
+            "payout_dates": payout_dates_text, "payout_cycles": payout_cycles,
+            "overdue": overdue, "due_now": due_now, "paid": paid,
+        })
+        ai_context_lines.append(
+            f"- {g['name']}: slot(s) {positions or 'unassigned'}, monthly ₦{monthly:,.0f}, "
+            f"payout ₦{payout_total:,.0f}, payout month: {payout_dates_text}"
+            + (f", ⚠{overdue} overdue" if overdue else "")
         )
 
-    if not group_lines:
+    if not groups_data:
         return None
 
+    first_name = user_doc["name"].split()[0]
     if email_type == "reminder":
         subject = f"⏰ Ajo Contribution Reminder — {brand}"
         heading = "Contribution Reminder"
-        intro = f"Hi {user_doc['name'].split()[0]}, this is a friendly reminder about your upcoming Ajo contributions."
+        default_intro = (
+            f"Hi {first_name}, this is your scheduled contribution reminder. "
+            "Please review your outstanding payments below and settle them before the due date to avoid late fees."
+        )
     else:
         subject = f"📋 Your Ajo Group Summary — {brand}"
         heading = "Your Ajo Summary"
-        intro = f"Hi {user_doc['name'].split()[0]}, here's a full overview of your Ajo groups."
+        default_intro = (
+            f"Hi {first_name}, here's a complete overview of your Ajo groups — your contributions, "
+            "payout schedule, and current standing across all active groups."
+        )
 
-    if groq_key and group_lines:
+    if groq_key:
         ai_system = (
-            f"You are a friendly {brand} assistant writing a brief, warm, professional email body (3-5 sentences). "
-            f"Email type: {email_type}. Keep it concise, encouraging, action-oriented. "
-            "Do NOT repeat the table data — add a motivational note and what to do next."
+            f"You are a warm, professional {brand} community finance assistant. "
+            f"Write a personalised email opening paragraph (2-4 sentences, no bullet points) for a '{email_type}' email. "
+            "Be encouraging, friendly, and specific to their situation. "
+            "Do NOT repeat the group table data that follows. End with a positive, motivating sentence."
+        )
+        ai_user = (
+            f"Member name: {user_doc['name']}. "
+            f"Total groups: {len(groups_data)}. Total monthly: ₦{total_monthly:,.0f}.\n"
+            + "\n".join(ai_context_lines)
         )
         try:
-            ai_body = await call_groq(groq_key, ai_system, f"Member: {user_doc['name']}. Summary:\n" + "\n".join(group_lines), model)
+            ai_intro = await call_groq(groq_key, ai_system, ai_user, model)
         except Exception:
-            ai_body = intro
+            ai_intro = default_intro
     else:
-        ai_body = intro
+        ai_intro = default_intro
 
-    html_rows = "".join(
-        f"<tr style='border-bottom:1px solid #e2e8f0'><td style='padding:10px 0;font-size:14px'>{line[2:]}</td></tr>"
-        for line in group_lines
-    )
-    body_html = (
-        f"{ai_body}<br><br>"
-        f"<table style='width:100%;border-collapse:collapse;margin:16px 0'>"
-        f"<tr style='background:#f8fafc'><th style='padding:10px;text-align:left;font-size:13px;color:#64748b'>YOUR GROUPS</th></tr>"
-        f"{html_rows}"
-        f"</table>"
-        f"<p style='font-size:13px;color:#64748b'>Total monthly contribution: <strong>₦{total_monthly:,.0f}</strong></p>"
-    )
-    return {"subject": subject, "heading": heading, "body_html": body_html,
-            "recipient_name": user_doc["name"], "recipient_email": user_doc["email"]}
+    # ── Build beautiful HTML body ──────────────────────────────────────────
+    # Stats summary bar
+    total_overdue = sum(g["overdue"] for g in groups_data)
+    stats_html = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px">
+  <tr>
+    <td width="47%" style="background:#1E3F33;border-radius:10px;padding:16px 14px;text-align:center;vertical-align:top">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.65);margin-bottom:5px">Monthly contribution</div>
+      <div style="font-size:22px;font-weight:700;color:#fff;letter-spacing:-0.5px">&#8358;{total_monthly:,.0f}</div>
+    </td>
+    <td width="6%"></td>
+    <td width="47%" style="background:#f8f7f4;border:1px solid #e5e7eb;border-radius:10px;padding:16px 14px;text-align:center;vertical-align:top">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#6b7280;margin-bottom:5px">Active groups</div>
+      <div style="font-size:22px;font-weight:700;color:#1E3F33;letter-spacing:-0.5px">{len(groups_data)}</div>
+    </td>
+  </tr>
+</table>"""
+
+    if total_overdue > 0:
+        stats_html += f"""<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:18px">
+  <tr><td style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px">
+    <span style="font-size:13px;color:#dc2626;font-weight:600">&#9888; You have {total_overdue} overdue payment{'s' if total_overdue>1 else ''} — please settle before your next due date.</span>
+  </td></tr>
+</table>"""
+
+    # AI intro paragraph
+    intro_html = f"""<p style="font-size:14px;line-height:1.75;color:#374151;margin:0 0 20px;padding:14px 16px;background:#f0f7f4;border-left:3px solid #1E3F33;border-radius:0 8px 8px 0">{ai_intro}</p>"""
+
+    divider = '<hr style="border:none;border-top:1px solid #eee;margin:6px 0 18px">'
+
+    # Group cards
+    cards_html = ""
+    for gd in groups_data:
+        slot_badges = "".join(
+            f'<span style="display:inline-block;background:#1E3F33;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;margin-left:4px">#{p}</span>'
+            for p in gd["positions"]
+        ) or '<span style="font-size:10px;color:#9ca3af">unassigned</span>'
+
+        payout_color = "#16a34a" if gd["payout_cycles"] else "#6b7280"
+        paid_bar_pct = int((gd["paid"] / gd["total_cycles"]) * 100) if gd["total_cycles"] else 0
+
+        alert_row = ""
+        if gd["overdue"] > 0:
+            alert_row = (
+                f'<tr><td style="background:#fef2f2;padding:9px 16px;border-top:1px solid #fecaca">'
+                f'<span style="font-size:12px;color:#dc2626;font-weight:600">&#9888; {gd["overdue"]} overdue payment{"s" if gd["overdue"]>1 else ""}'
+                f' — settle immediately to avoid late fees</span></td></tr>'
+            )
+        elif gd["due_now"] > 0:
+            alert_row = (
+                f'<tr><td style="background:#fefce8;padding:9px 16px;border-top:1px solid #fde68a">'
+                f'<span style="font-size:12px;color:#92400e;font-weight:600">&#9201; {gd["due_now"]} payment{"s" if gd["due_now"]>1 else ""}'
+                f' due now — please pay today</span></td></tr>'
+            )
+
+        multi_slot_note = (
+            f'<div style="font-size:10px;color:#9ca3af;margin-top:2px">{len(gd["positions"])} slots &times; &#8358;{gd["contribution_amount"]:,.0f}</div>'
+            if len(gd["positions"]) > 1 else ""
+        )
+
+        cards_html += f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">
+  <tr>
+    <td style="background:#f0f7f4;padding:12px 16px;border-bottom:1px solid #e5e7eb">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="font-size:14px;font-weight:700;color:#111827">{gd['name']}</td>
+          <td align="right" style="white-space:nowrap">{slot_badges}</td>
+        </tr>
+        <tr>
+          <td colspan="2" style="font-size:11px;color:#6b7280;padding-top:3px;text-transform:capitalize">
+            {gd['frequency']} &middot; {gd['total_cycles']} cycles &middot; {gd['paid']} paid
+            &middot; <span style="color:#{'dc2626' if gd['status']!='active' else '1E3F33'}">{gd['status']}</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:14px 16px">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="33%" style="border-right:1px solid #f3f4f6;padding-right:12px;vertical-align:top">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">Monthly due</div>
+            <div style="font-size:16px;font-weight:700;color:#111827">&#8358;{gd['monthly']:,.0f}</div>
+            {multi_slot_note}
+          </td>
+          <td width="33%" style="padding:0 12px;border-right:1px solid #f3f4f6;vertical-align:top">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">I receive</div>
+            <div style="font-size:16px;font-weight:700;color:#1E3F33">&#8358;{gd['payout_total']:,.0f}</div>
+            <div style="font-size:10px;color:#9ca3af;margin-top:2px">{gd['total_members']} members</div>
+          </td>
+          <td width="34%" style="padding-left:12px;vertical-align:top">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#9ca3af;margin-bottom:4px">Payout month</div>
+            <div style="font-size:13px;font-weight:600;color:{payout_color}">{gd['payout_dates']}</div>
+          </td>
+        </tr>
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px">
+        <tr>
+          <td style="font-size:10px;color:#9ca3af;padding-bottom:3px">Payment progress: {gd['paid']}/{gd['total_cycles']} cycles</td>
+        </tr>
+        <tr>
+          <td style="background:#f3f4f6;border-radius:99px;height:5px;overflow:hidden">
+            <div style="background:#1E3F33;height:5px;width:{paid_bar_pct}%;border-radius:99px"></div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {alert_row}
+</table>"""
+
+    body_html = stats_html + intro_html + divider + cards_html
+    return {
+        "subject": subject,
+        "heading": heading,
+        "body_html": body_html,
+        "recipient_name": user_doc["name"],
+        "recipient_email": user_doc["email"],
+        "ai_intro": ai_intro,
+    }
 
 
 # ──────────────────────────────────────────────
@@ -2321,26 +2452,40 @@ class AIPreviewEmailIn(BaseModel):
 
 @api.post("/admin/ai/preview-summary-email")
 async def ai_preview_summary_email(data: AIPreviewEmailIn, admin=Depends(require_admin)):
-    """Build and return email content for one sample member without sending (for admin review)."""
+    """Build and return full email HTML for one sample member — pixel-perfect preview before sending."""
     s = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
     groq_key = s.get("groq_api_key")
     model = s.get("groq_model") or "llama-3.3-70b-versatile"
     brand = s.get("brand_name") or "Ajo Platform"
     fe = _get_fe_url(s)
 
+    # Find real members who have group memberships (most reliable source)
     if data.group_id:
-        mems = await db.group_members.find({"group_id": data.group_id}, {"user_id": 1}).to_list(1000)
+        mems = await db.group_members.find({"group_id": data.group_id}, {"user_id": 1}).to_list(200)
         target_user_ids = list({m["user_id"] for m in mems})
     else:
-        all_users = await db.users.find({"role": "member"}, {"id": 1}).limit(20).to_list(20)
-        target_user_ids = [u["id"] for u in all_users]
+        # Query group_members directly — these users definitely have group data
+        sample_mems = await db.group_members.find({}, {"user_id": 1}).limit(100).to_list(100)
+        seen_uid: set = set()
+        target_user_ids = []
+        for m in sample_mems:
+            uid = m.get("user_id")
+            if uid and uid not in seen_uid:
+                seen_uid.add(uid)
+                target_user_ids.append(uid)
 
     for uid in target_user_ids:
         content = await _build_member_email_content(uid, data.email_type, brand, fe, groq_key, model)
         if content:
+            # Wrap with the same template used for real sends — pixel-perfect preview
+            full_html = _email_wrap(
+                content["heading"], content["body_html"],
+                "View my dashboard", f"{fe}/dashboard", brand
+            )
+            content["full_html"] = full_html
             return {"ok": True, "preview": content}
 
-    raise HTTPException(404, "No members with group data found to preview.")
+    raise HTTPException(404, "No members with group data found. Make sure members are assigned to groups first.")
 
 
 # ── Member: own Ajo summary ──
