@@ -918,7 +918,9 @@ async def my_groups(user=Depends(get_current_user)):
         g = await db.groups.find_one({"id": gid}, {"_id": 0})
         if not g:
             continue
-        slot_positions = sorted([s["payout_position"] for s in slots])
+        slot_positions = sorted([s["payout_position"] for s in slots if s.get("payout_position") is not None])
+        if not slot_positions:
+            continue
         out.append({
             **g,
             "my_slots": slot_positions,
@@ -937,7 +939,8 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
     if not is_admin and not is_member:
         raise HTTPException(403, "Not a member of this group")
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
-    members = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
+    members_raw = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
+    members = [m for m in members_raw if m.get("payout_position") is not None]
     # Resolve display names (alias for non-admin viewers if user opts in)
     member_user_ids = [m["user_id"] for m in members]
     user_docs = await db.users.find({"id": {"$in": member_user_ids}},
