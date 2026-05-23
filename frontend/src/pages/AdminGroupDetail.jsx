@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
-import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X, Plus, CalendarDays, RefreshCcw, AlertTriangle } from "lucide-react";
+import { Trash2, UserPlus, Check, Copy, ExternalLink, Pencil, Save, Link2, RefreshCw, MessageSquare, X, Plus, CalendarDays, RefreshCcw, AlertTriangle, Clock, AlertCircle, Ban, Minus } from "lucide-react";
 import InvitationsPanel from "../components/InvitationsPanel";
 import Comments from "../components/Comments";
 
@@ -83,7 +83,7 @@ export default function AdminGroupDetail() {
     ]);
     // also fetch full statuses via the detail endpoint
     const detail = await api.get(`/groups/${id}/detail`).then(r=>r.data);
-    setData({ ...d, statuses: detail.statuses, cycles: detail.cycles });
+    setData({ ...d, statuses: detail.statuses, cycles: detail.cycles, member_payment_statuses: detail.member_payment_statuses || {}, active_cycle_no: detail.active_cycle_no ?? null });
     setUsers(u);
   };
   const loadMessages = () =>
@@ -129,7 +129,30 @@ export default function AdminGroupDetail() {
 
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="page-main">Loading...</div></div>;
 
-  const { group, members, cycles, statuses } = data;
+  const { group, members, cycles, statuses, member_payment_statuses = {}, active_cycle_no } = data;
+
+  // ── Per-member payment status chip ──
+  const PAYMENT_CHIP = {
+    Approved:         { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,       label: "Paid" },
+    Payout_Completed: { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,       label: "Paid" },
+    Paid:             { bg: "#dbeafe", color: "#1d4ed8", border: "#bfdbfe", Icon: Clock,       label: "Verifying" },
+    Due:              { bg: "#fef3c7", color: "#b45309", border: "#fde68a", Icon: AlertCircle, label: "Due" },
+    Overdue:          { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", Icon: Ban,         label: "Overdue" },
+    Rejected:         { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", Icon: Ban,         label: "Rejected" },
+    Not_Due:          { bg: "#f1f5f9", color: "#94a3b8", border: "#e2e8f0", Icon: Minus,       label: "Upcoming" },
+  };
+  const memberPayChip = (userId) => {
+    const st = member_payment_statuses[userId];
+    const cfg = PAYMENT_CHIP[st];
+    if (!cfg) return null;
+    const { bg, color, border, Icon, label } = cfg;
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+        style={{background:bg, color, border:`1px solid ${border}`}}>
+        <Icon size={10}/>{label}
+      </span>
+    );
+  };
   const memberIds = new Set(members.map(m=>m.user_id));
   const newUsers = users.filter(u => u.role === "member" && !memberIds.has(u.id));
   const userMap = Object.fromEntries(users.map(u => [u.id, u]));
@@ -305,6 +328,12 @@ export default function AdminGroupDetail() {
         {tab === "members" && (
           <div className="grid lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 card-tactile overflow-hidden" data-testid="group-members-table">
+              {active_cycle_no != null && (
+                <div className="px-4 pt-3 pb-1 flex items-center gap-1.5 text-xs" style={{color:"var(--muted)"}}>
+                  <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 shrink-0"/>
+                  Month {active_cycle_no} payment status
+                </div>
+              )}
               {/* Mobile member cards */}
               <div className="mobile-list-card divide-y" style={{borderColor:"var(--border)"}}>
                 {groupedMembers.map(({ info: m, slots }) => {
@@ -314,7 +343,10 @@ export default function AdminGroupDetail() {
                     <div key={m.user_id} className="p-4">
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="min-w-0">
-                          <div className="font-semibold text-sm truncate">{m.user_name}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="font-semibold text-sm truncate">{m.user_name}</div>
+                            {memberPayChip(m.user_id)}
+                          </div>
                           <div className="text-xs truncate" style={{color:"var(--muted)"}}>{m.user_email}</div>
                           {hasBank ? (
                             <div className="text-xs mt-1 flex items-center gap-1" style={{color:"var(--muted)"}}>
@@ -380,7 +412,9 @@ export default function AdminGroupDetail() {
                     return (
                     <tr key={m.user_id} className="border-t align-top" style={{borderColor:"var(--border)"}}>
                       <td className="px-4 py-3">
-                        <div className="font-medium">{m.user_name}</div>
+                        <div className="font-medium flex items-center gap-2 flex-wrap">
+                          {m.user_name}{memberPayChip(m.user_id)}
+                        </div>
                         <div className="text-xs mt-0.5" style={{color:"var(--muted)"}}>{m.user_email}</div>
                       </td>
                       <td className="px-4 py-3">

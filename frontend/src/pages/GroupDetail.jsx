@@ -133,7 +133,7 @@ export default function GroupDetail() {
   const memberPayChip = (userId) => {
     const st = member_payment_statuses[userId];
     const cfg = PAYMENT_CHIP[st];
-    if (!cfg || st === "Not_Due") return null; // hide "upcoming" to reduce noise
+    if (!cfg) return null;
     const { bg, color, border, Icon, label } = cfg;
     return (
       <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
