@@ -62,6 +62,13 @@ export default function AdminDashboard() {
   const [resetPwTarget, setResetPwTarget] = useState(null);
   const [resetPwValue, setResetPwValue] = useState("");
   const [resetPwErr, setResetPwErr] = useState("");
+  const [deciding, setDeciding] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [addingUser, setAddingUser] = useState(false);
+  const [editingUserBusy, setEditingUserBusy] = useState(false);
+  const [resetPwBusy, setResetPwBusy] = useState(false);
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [actionBusyId, setActionBusyId] = useState(null);
 
   const load = async () => {
     const [s, g, p, u, a] = await Promise.all([
@@ -101,7 +108,7 @@ export default function AdminDashboard() {
   };
 
   const submitCreate = async (e) => {
-    e.preventDefault(); setCreateErr("");
+    e.preventDefault(); if (creating) return; setCreateErr(""); setCreating(true);
     try {
       await api.post("/admin/groups", { ...form,
         contribution_amount: Number(form.contribution_amount),
@@ -111,6 +118,7 @@ export default function AdminDashboard() {
       });
       setCreateOpen(false); load();
     } catch (e) { setCreateErr(formatErr(e?.response?.data?.detail)); }
+    finally { setCreating(false); }
   };
 
   const openReceipt = async (p) => {
@@ -119,14 +127,16 @@ export default function AdminDashboard() {
   };
 
   const decide = async (decision) => {
+    if (deciding) return; setDeciding(true);
     try {
       await api.post(`/admin/payments/${reviewing.id}/decision`, { decision, note: reviewNote });
       setReviewing(null); load();
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setDeciding(false); }
   };
 
   const submitAddUser = async (e) => {
-    e.preventDefault(); setAddUserErr("");
+    e.preventDefault(); if (addingUser) return; setAddUserErr(""); setAddingUser(true);
     try {
       const payload = {
         name: addUserForm.name,
@@ -143,14 +153,18 @@ export default function AdminDashboard() {
       setAddUserForm({ name: "", email: "", phone: "", group_id: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
       load();
     } catch (e) { setAddUserErr(formatErr(e?.response?.data?.detail)); }
+    finally { setAddingUser(false); }
   };
 
   const deleteGroup = async (g) => {
+    if (actionBusyId) return;
     if (!window.confirm(`Delete "${g.name}"?\n\nThis will permanently remove the group, all members, cycles, payments and history. This cannot be undone.`)) return;
+    setActionBusyId(g.id);
     try {
       await api.delete(`/admin/groups/${g.id}`);
       load();
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setActionBusyId(null); }
   };
 
   const openEditUser = (u) => {
@@ -160,33 +174,41 @@ export default function AdminDashboard() {
   };
 
   const submitEditUser = async (e) => {
-    e.preventDefault(); setEditUserErr("");
+    e.preventDefault(); if (editingUserBusy) return; setEditUserErr(""); setEditingUserBusy(true);
     try {
       await api.patch(`/admin/users/${editUserTarget.id}`, editUserForm);
       setEditUserTarget(null); load();
     } catch (e) { setEditUserErr(formatErr(e?.response?.data?.detail)); }
+    finally { setEditingUserBusy(false); }
   };
 
   const submitResetPw = async (e) => {
-    e.preventDefault(); setResetPwErr("");
+    e.preventDefault(); if (resetPwBusy) return; setResetPwErr(""); setResetPwBusy(true);
     try {
       await api.post(`/admin/users/${resetPwTarget.id}/set-password`, { password: resetPwValue });
       setResetPwTarget(null); setResetPwValue("");
     } catch (e) { setResetPwErr(formatErr(e?.response?.data?.detail)); }
+    finally { setResetPwBusy(false); }
   };
 
   const deleteUser = async (u) => {
+    if (actionBusyId) return;
     if (!window.confirm(`Delete ${u.name} (${u.email})? This removes the user and all their group memberships. This cannot be undone.`)) return;
+    setActionBusyId(u.id);
     try { await api.delete(`/admin/users/${u.id}`); load(); }
     catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setActionBusyId(null); }
   };
 
   const resendSetupEmail = async (u) => {
+    if (actionBusyId) return;
     if (!window.confirm(`Resend the account activation email to ${u.email}?`)) return;
+    setActionBusyId(u.id);
     try {
       await api.post(`/admin/users/${u.id}/resend-setup-email`);
       alert("Email sent successfully.");
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setActionBusyId(null); }
   };
 
   const changeRole = async (userId, newRole) => {
@@ -199,11 +221,12 @@ export default function AdminDashboard() {
   };
 
   const sendBroadcast = async (e) => {
-    e.preventDefault(); setBroadMsg("");
+    e.preventDefault(); if (broadcasting) return; setBroadMsg(""); setBroadcasting(true);
     try {
       await api.post("/admin/broadcast", { title: broadTitle, body: broadBody });
       setBroadMsg("Sent to all members!"); setBroadTitle(""); setBroadBody("");
     } catch (e) { setBroadMsg(formatErr(e?.response?.data?.detail) || "Failed"); }
+    finally { setBroadcasting(false); }
   };
 
   const filteredUsers = users.filter(u =>
@@ -723,7 +746,7 @@ export default function AdminDashboard() {
             {editUserErr && <div className="text-red-700 text-sm mt-3">{editUserErr}</div>}
             <div className="flex gap-2 mt-5 justify-end">
               <button type="button" onClick={()=>setEditUserTarget(null)} className="btn-secondary text-sm">Cancel</button>
-              <button type="submit" className="btn-primary text-sm">Save changes</button>
+              <button type="submit" disabled={editingUserBusy} className="btn-primary text-sm">{editingUserBusy ? "Saving..." : "Save changes"}</button>
             </div>
           </form>
         </div>
@@ -747,7 +770,7 @@ export default function AdminDashboard() {
             {resetPwErr && <div className="text-red-700 text-sm mt-3">{resetPwErr}</div>}
             <div className="flex gap-2 mt-5 justify-end">
               <button type="button" onClick={()=>setResetPwTarget(null)} className="btn-secondary text-sm">Cancel</button>
-              <button type="submit" className="btn-primary text-sm">Set password</button>
+              <button type="submit" disabled={resetPwBusy} className="btn-primary text-sm">{resetPwBusy ? "Saving..." : "Set password"}</button>
             </div>
           </form>
         </div>
@@ -832,7 +855,7 @@ export default function AdminDashboard() {
             {addUserErr && <div className="text-red-700 text-sm mt-3">{addUserErr}</div>}
             <div className="flex gap-2 mt-5 justify-end">
               <button type="button" onClick={()=>setAddUserOpen(false)} className="btn-secondary text-sm">Cancel</button>
-              <button type="submit" className="btn-primary text-sm inline-flex items-center gap-1.5"><UserPlus size={13}/>Create & send email</button>
+              <button type="submit" disabled={addingUser} className="btn-primary text-sm inline-flex items-center gap-1.5"><UserPlus size={13}/>{addingUser ? "Creating..." : "Create & send email"}</button>
             </div>
           </form>
         </div>
@@ -1028,7 +1051,7 @@ export default function AdminDashboard() {
             )}
             <div className="border-t px-5 py-4 flex gap-3 flex-shrink-0 bg-white" style={{borderColor:"var(--border)"}}>
               <button type="button" onClick={()=>setCreateOpen(false)} className="btn-secondary flex-1 text-sm" data-testid="create-cancel">Cancel</button>
-              <button type="submit" className="btn-primary flex-1 text-sm" data-testid="create-submit">Create group</button>
+              <button type="submit" disabled={creating} className="btn-primary flex-1 text-sm" data-testid="create-submit">{creating ? "Creating..." : "Create group"}</button>
             </div>
           </form>
         </div>
@@ -1070,8 +1093,8 @@ export default function AdminDashboard() {
                   className="w-full border rounded px-3 py-2 text-sm" data-testid="review-note" />
               </div>
               <div className="flex gap-2 mt-auto">
-                <button onClick={()=>decide("reject")} className="btn-secondary text-sm" style={{borderColor:"#b91c1c",color:"#b91c1c"}} data-testid="review-reject">Reject</button>
-                <button onClick={()=>decide("approve")} className="btn-primary text-sm" data-testid="review-approve">✓ Approve</button>
+                <button onClick={()=>decide("reject")} disabled={deciding} className="btn-secondary text-sm" style={{borderColor:"#b91c1c",color:"#b91c1c"}} data-testid="review-reject">{deciding ? "..." : "Reject"}</button>
+                <button onClick={()=>decide("approve")} disabled={deciding} className="btn-primary text-sm" data-testid="review-approve">{deciding ? "Saving..." : "✓ Approve"}</button>
                 <button onClick={()=>setReviewing(null)} className="ml-auto text-sm" style={{color:"var(--muted)"}} data-testid="review-close">Close</button>
               </div>
             </div>
@@ -1102,7 +1125,7 @@ export default function AdminDashboard() {
             {broadMsg && <div className="mt-3 text-sm font-medium" style={{color:"var(--primary)"}}>{broadMsg}</div>}
             <div className="flex gap-2 mt-5 justify-end">
               <button type="button" onClick={()=>setBroadcastOpen(false)} className="btn-secondary text-sm">Cancel</button>
-              <button type="submit" className="btn-primary text-sm inline-flex items-center gap-1.5"><Megaphone size={13}/>Send to all</button>
+              <button type="submit" disabled={broadcasting} className="btn-primary text-sm inline-flex items-center gap-1.5"><Megaphone size={13}/>{broadcasting ? "Sending..." : "Send to all"}</button>
             </div>
           </form>
         </div>

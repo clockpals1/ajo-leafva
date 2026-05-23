@@ -75,6 +75,10 @@ export default function AdminGroupDetail() {
   const [recalcBusy, setRecalcBusy] = useState(false);
   const [recalcMsg, setRecalcMsg] = useState("");
   const [recalcConfirm, setRecalcConfirm] = useState(false);
+  const [payoutBusy, setPayoutBusy] = useState(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [addSlotBusy, setAddSlotBusy] = useState(false);
+  const [posBusy, setPosBusy] = useState(null);
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -214,33 +218,43 @@ export default function AdminGroupDetail() {
 
   const savePosition = async (mid) => {
     const val = parseInt(editingPos[mid], 10);
-    if (!val || val < 1) return;
+    if (!val || val < 1 || posBusy === mid) return;
+    setPosBusy(mid);
     try {
       await api.patch(`/admin/groups/${id}/members/${mid}`, { payout_position: val });
       cancelEditPos(mid); load();
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setPosBusy(null); }
   };
 
   const remove = (mid, name) => { setRemoveTarget({ uid: mid, name }); setRemoveReason(""); };
 
   const confirmRemove = async () => {
+    if (removeBusy) return; setRemoveBusy(true);
     const qs = removeReason ? `?reason=${encodeURIComponent(removeReason)}` : "";
-    await api.delete(`/admin/groups/${id}/members/${removeTarget.uid}${qs}`);
-    setRemoveTarget(null); load();
+    try {
+      await api.delete(`/admin/groups/${id}/members/${removeTarget.uid}${qs}`);
+      setRemoveTarget(null); load();
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setRemoveBusy(false); }
   };
 
   const confirmPayout = async (cycleNo) => {
+    if (payoutBusy !== null) return;
     if (!window.confirm(`Confirm payout for cycle ${cycleNo}?`)) return;
+    setPayoutBusy(cycleNo);
     try { await api.post(`/admin/payouts/${id}/${cycleNo}/confirm`); load(); }
     catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setPayoutBusy(null); }
   };
 
   const addSlot = async (e) => {
-    e.preventDefault(); setAddSlotErr("");
+    e.preventDefault(); if (addSlotBusy) return; setAddSlotErr(""); setAddSlotBusy(true);
     try {
       await api.post(`/admin/groups/${id}/members`, { email: addSlotTarget.email, payout_position: Number(addSlotPos) });
       setAddSlotTarget(null); setAddSlotPos(""); load();
     } catch (e) { setAddSlotErr(formatErr(e?.response?.data?.detail)); }
+    finally { setAddSlotBusy(false); }
   };
 
   const saveDueDate = async (cycleId, draftDate) => {
@@ -375,8 +389,8 @@ export default function AdminGroupDetail() {
                                     onChange={e=>setEditingPos(p=>({...p,[s.id]:e.target.value}))}
                                     onKeyDown={e=>{ if(e.key==="Enter") savePosition(s.id); if(e.key==="Escape") cancelEditPos(s.id); }}
                                     className="w-14 border rounded px-1.5 py-1 text-sm text-center font-display" autoFocus />
-                                  <button onClick={()=>savePosition(s.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>✓</button>
-                                  <button onClick={()=>cancelEditPos(s.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
+                                  <button onClick={()=>savePosition(s.id)} disabled={posBusy === s.id} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>{posBusy === s.id ? "..." : "✓"}</button>
+                                  <button onClick={()=>cancelEditPos(s.id)} disabled={posBusy === s.id} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}}>✕</button>
                                 </div>
                               ) : (
                                 <button onClick={()=>startEditPos(s.id,s.payout_position)}
@@ -429,8 +443,8 @@ export default function AdminGroupDetail() {
                                       onChange={e=>setEditingPos(p=>({...p,[s.id]:e.target.value}))}
                                       onKeyDown={e=>{ if(e.key==="Enter") savePosition(s.id); if(e.key==="Escape") cancelEditPos(s.id); }}
                                       className="w-16 border rounded px-2 py-1 text-sm text-center font-display" autoFocus />
-                                    <button onClick={()=>savePosition(s.id)} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">✓</button>
-                                    <button onClick={()=>cancelEditPos(s.id)} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
+                                    <button onClick={()=>savePosition(s.id)} disabled={posBusy === s.id} className="text-xs font-semibold px-1.5 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}} title="Save">{posBusy === s.id ? "..." : "✓"}</button>
+                                    <button onClick={()=>cancelEditPos(s.id)} disabled={posBusy === s.id} className="text-xs px-1.5 py-1 rounded" style={{background:"var(--surface)"}} title="Cancel">✕</button>
                                   </div>
                                 ) : (
                                   <button onClick={()=>startEditPos(s.id,s.payout_position)}
@@ -708,8 +722,8 @@ export default function AdminGroupDetail() {
                       </div>
                     ) : <div className="text-xs mt-1" style={{color:"var(--muted)"}}>No bank on file</div>}
                     {c.payout_status !== "completed" && recipient && (
-                      <button onClick={()=>confirmPayout(c.cycle_no)} className="btn-primary w-full !py-2.5 text-sm inline-flex items-center justify-center gap-1 mt-3" data-testid={`payout-${c.cycle_no}`}>
-                        <Check size={14}/> Confirm payout
+                      <button onClick={()=>confirmPayout(c.cycle_no)} disabled={payoutBusy !== null} className="btn-primary w-full !py-2.5 text-sm inline-flex items-center justify-center gap-1 mt-3" data-testid={`payout-${c.cycle_no}`}>
+                        <Check size={14}/>{payoutBusy === c.cycle_no ? "Confirming..." : "Confirm payout"}
                       </button>
                     )}
                   </div>
@@ -770,8 +784,8 @@ export default function AdminGroupDetail() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         {c.payout_status !== "completed" && recipient && (
-                          <button onClick={()=>confirmPayout(c.cycle_no)} className="btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1" data-testid={`payout-${c.cycle_no}`}>
-                            <Check size={12}/> Confirm payout
+                          <button onClick={()=>confirmPayout(c.cycle_no)} disabled={payoutBusy !== null} className="btn-primary !py-1.5 !px-3 text-xs inline-flex items-center gap-1" data-testid={`payout-${c.cycle_no}`}>
+                            <Check size={12}/>{payoutBusy === c.cycle_no ? "Confirming..." : "Confirm payout"}
                           </button>
                         )}
                       </td>
@@ -994,8 +1008,8 @@ export default function AdminGroupDetail() {
               className="form-input mb-3" autoFocus placeholder="e.g. 6" />
             {addSlotErr && <div className="text-red-700 text-sm mb-3 px-3 py-2 rounded" style={{background:"#fef2f2"}}>{addSlotErr}</div>}
             <div className="flex gap-3">
-              <button type="button" onClick={()=>setAddSlotTarget(null)} className="btn-secondary flex-1 text-sm">Cancel</button>
-              <button type="submit" className="btn-primary flex-1 text-sm">Add slot</button>
+              <button type="button" onClick={()=>setAddSlotTarget(null)} disabled={addSlotBusy} className="btn-secondary flex-1 text-sm">Cancel</button>
+              <button type="submit" disabled={addSlotBusy} className="btn-primary flex-1 text-sm">{addSlotBusy ? "Adding..." : "Add slot"}</button>
             </div>
           </form>
         </div>
@@ -1019,9 +1033,9 @@ export default function AdminGroupDetail() {
                 className="form-input" placeholder="e.g. Missed payments, violated group terms" />
             </div>
             <div className="flex gap-3">
-              <button onClick={()=>setRemoveTarget(null)} className="btn-secondary flex-1 text-sm">Cancel</button>
-              <button onClick={confirmRemove} className="flex-1 text-sm px-4 py-2.5 rounded-lg font-semibold text-white" style={{background:"#dc2626"}}>
-                Remove member
+              <button onClick={()=>setRemoveTarget(null)} disabled={removeBusy} className="btn-secondary flex-1 text-sm">Cancel</button>
+              <button onClick={confirmRemove} disabled={removeBusy} className="flex-1 text-sm px-4 py-2.5 rounded-lg font-semibold text-white" style={{background:"#dc2626"}}>
+                {removeBusy ? "Removing..." : "Remove member"}
               </button>
             </div>
           </div>
