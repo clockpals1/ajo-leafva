@@ -5,7 +5,7 @@ import TopNav from "../components/TopNav";
 import StatusBadge from "../components/StatusBadge";
 import Comments from "../components/Comments";
 import { useAuth } from "../AuthContext";
-import { Upload, MessageCircle, X, AlertTriangle, CalendarClock, Landmark, ArrowRight, Star, CheckCircle2, Gift } from "lucide-react";
+import { Upload, MessageCircle, X, AlertTriangle, CalendarClock, Landmark, ArrowRight, Star, CheckCircle2, Gift, Check, Clock, AlertCircle, Ban, Minus } from "lucide-react";
 
 export default function GroupDetail() {
   const { id } = useParams();
@@ -43,7 +43,7 @@ export default function GroupDetail() {
   if (err) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10 text-red-700">{err}</div></div>;
   if (!data) return <div className="min-h-screen bg-app"><TopNav /><div className="max-w-3xl mx-auto p-10">Loading...</div></div>;
 
-  const { group, cycles, statuses, members } = data;
+  const { group, cycles, statuses, members, member_payment_statuses = {}, active_cycle_no } = data;
   const isAdmin = user.role === "admin" || user.role === "super_admin";
 
   // ── Member-specific derived data ──
@@ -118,6 +118,29 @@ export default function GroupDetail() {
     if (!s) return "transparent";
     const map = { Due: "#fef3c7", Not_Due: "transparent", Overdue: "#fee2e2", Paid: "#eff6ff", Approved: "#f0fdf4", Rejected: "#fee2e2" };
     return map[s.status] || "transparent";
+  };
+
+  // ── Per-member payment status chip (visible to all members) ──
+  const PAYMENT_CHIP = {
+    Approved:          { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,        label: "Paid" },
+    Payout_Completed:  { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,        label: "Paid" },
+    Paid:              { bg: "#dbeafe", color: "#1d4ed8", border: "#bfdbfe", Icon: Clock,        label: "Verifying" },
+    Due:               { bg: "#fef3c7", color: "#b45309", border: "#fde68a", Icon: AlertCircle,  label: "Due" },
+    Overdue:           { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", Icon: Ban,          label: "Overdue" },
+    Rejected:          { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", Icon: Ban,          label: "Rejected" },
+    Not_Due:           { bg: "#f1f5f9", color: "#94a3b8", border: "#e2e8f0", Icon: Minus,        label: "Upcoming" },
+  };
+  const memberPayChip = (userId) => {
+    const st = member_payment_statuses[userId];
+    const cfg = PAYMENT_CHIP[st];
+    if (!cfg || st === "Not_Due") return null; // hide "upcoming" to reduce noise
+    const { bg, color, border, Icon, label } = cfg;
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full shrink-0"
+        style={{background:bg, color, border:`1px solid ${border}`}}>
+        <Icon size={10}/>{label}
+      </span>
+    );
   };
 
   return (
@@ -342,9 +365,18 @@ export default function GroupDetail() {
 
         {/* ── Members ── */}
         <section>
-          <h2 className="font-display text-xl sm:text-2xl mb-3 sm:mb-4">
-            Group members ({membersByUser.length} {membersByUser.length === 1 ? "member" : "members"})
-          </h2>
+          <div className="flex flex-wrap items-end justify-between gap-2 mb-3 sm:mb-4">
+            <h2 className="font-display text-xl sm:text-2xl">
+              Group members ({membersByUser.length} {membersByUser.length === 1 ? "member" : "members"})
+            </h2>
+            {active_cycle_no != null && (
+              <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full"
+                style={{background:"var(--surface)",border:"1px solid var(--border)",color:"var(--muted)"}}>
+                <span className="w-1.5 h-1.5 rounded-full bg-current opacity-60 shrink-0" />
+                Month {active_cycle_no} payment status
+              </div>
+            )}
+          </div>
           <div className="card-tactile overflow-hidden">
             <div className="divide-y" style={{borderColor:"var(--border)"}}>
               {membersByUser.map(m => {
@@ -353,10 +385,11 @@ export default function GroupDetail() {
                   const c = cycles.find(cy => cy.cycle_no === pos);
                   return c ? fmtDate(c.due_date) : null;
                 }).filter(Boolean);
+                const chip = memberPayChip(m.user_id);
                 return (
                   <div key={m.user_id} className="px-4 py-3 flex items-center justify-between gap-3"
                     style={isMe ? {background:"var(--primary)06"} : {}}>
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold truncate flex items-center gap-1.5">
                         {m.display_name || m.user_name}
                         {isMe && <span className="text-xs px-1.5 py-0.5 rounded" style={{background:"var(--primary)15",color:"var(--primary)"}}>You</span>}
@@ -369,14 +402,18 @@ export default function GroupDetail() {
                         </div>
                       )}
                     </div>
-                    {/* Only show slot badges to admin or the member themselves */}
-                    {(isAdmin || isMe) && (
-                      <div className="flex gap-1 flex-wrap justify-end shrink-0">
-                        {m.slots.map(pos => (
-                          <span key={pos} className="badge s-Payout_Eligible">#{pos}</span>
-                        ))}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* Payment status chip — visible to all members */}
+                      {chip}
+                      {/* Slot badges — only shown to admin or the member themselves */}
+                      {(isAdmin || isMe) && (
+                        <div className="flex gap-1 flex-wrap justify-end">
+                          {m.slots.map(pos => (
+                            <span key={pos} className="badge s-Payout_Eligible">#{pos}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })}

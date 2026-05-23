@@ -1088,7 +1088,35 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
         my_status = await db.member_cycle_status.find({"group_id": group_id}, {"_id": 0}).to_list(5000)
     else:
         my_status = await db.member_cycle_status.find({"group_id": group_id, "user_id": user["id"]}, {"_id": 0}).to_list(1000)
-    return {"group": g, "cycles": cycles, "members": members, "statuses": my_status}
+
+    # ── Per-member payment status for the current active cycle (privacy-safe — status only, no amounts) ──
+    # Find the current active cycle: earliest with Due/Overdue status, else first pending cycle
+    due_rec = await db.member_cycle_status.find(
+        {"group_id": group_id, "status": {"$in": ["Due", "Overdue"]}},
+        {"_id": 0, "cycle_no": 1}
+    ).sort("cycle_no", 1).limit(1).to_list(1)
+    if due_rec:
+        active_cycle_no = due_rec[0]["cycle_no"]
+    else:
+        first_pending = await db.cycles.find(
+            {"group_id": group_id, "payout_status": {"$ne": "completed"}},
+            {"_id": 0, "cycle_no": 1}
+        ).sort("cycle_no", 1).limit(1).to_list(1)
+        active_cycle_no = first_pending[0]["cycle_no"] if first_pending else None
+
+    member_payment_statuses: dict = {}
+    if active_cycle_no is not None:
+        cycle_stats = await db.member_cycle_status.find(
+            {"group_id": group_id, "cycle_no": active_cycle_no},
+            {"_id": 0, "user_id": 1, "status": 1}
+        ).to_list(1000)
+        member_payment_statuses = {s["user_id"]: s["status"] for s in cycle_stats}
+
+    return {
+        "group": g, "cycles": cycles, "members": members, "statuses": my_status,
+        "member_payment_statuses": member_payment_statuses,
+        "active_cycle_no": active_cycle_no,
+    }
 
 # ── Helper: keep cycles.payout_user_id in sync with group_members.payout_position ──
 async def _sync_cycle_payouts(gid: str):
