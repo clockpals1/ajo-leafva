@@ -122,9 +122,9 @@ export default function GroupDetail() {
 
   // ── Per-member payment status chip (visible to all members) ──
   const PAYMENT_CHIP = {
-    Approved:          { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,        label: "Paid" },
+    Submitted:         { bg: "#dbeafe", color: "#1d4ed8", border: "#bfdbfe", Icon: Clock,        label: "Verifying" },
+    Paid:              { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,        label: "Paid" },
     Payout_Completed:  { bg: "#dcfce7", color: "#15803d", border: "#bbf7d0", Icon: Check,        label: "Paid" },
-    Paid:              { bg: "#dbeafe", color: "#1d4ed8", border: "#bfdbfe", Icon: Clock,        label: "Verifying" },
     Due:               { bg: "#fef3c7", color: "#b45309", border: "#fde68a", Icon: AlertCircle,  label: "Due" },
     Overdue:           { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", Icon: Ban,          label: "Overdue" },
     Rejected:          { bg: "#fee2e2", color: "#b91c1c", border: "#fecaca", Icon: Ban,          label: "Rejected" },
