@@ -592,47 +592,78 @@ export default function AdminGroupDetail() {
                   </button>
                 </div>
               )}
-              {!joinLinkLoading && !joinLinkErr && joinToken && (
-                <>
-                  <div className="flex gap-2">
-                    <div className="flex-1 px-3 py-2.5 rounded-lg border text-sm font-mono truncate"
-                      style={{background:"var(--surface)",borderColor:"var(--border)",color:"var(--text)"}}>
-                      {`${window.location.origin}/join/${joinToken}`}
+              {!joinLinkLoading && !joinLinkErr && joinToken && (() => {
+                const joinUrl = `${window.location.origin}/join/${joinToken}`;
+                const copyLink = async () => {
+                  try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                      await navigator.clipboard.writeText(joinUrl);
+                    } else {
+                      const ta = document.createElement("textarea");
+                      ta.value = joinUrl;
+                      ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+                      document.body.appendChild(ta);
+                      ta.focus(); ta.select();
+                      document.execCommand("copy");
+                      document.body.removeChild(ta);
+                    }
+                    setJoinCopied(true);
+                    setTimeout(() => setJoinCopied(false), 2500);
+                  } catch { setJoinCopied(false); }
+                };
+                const shareLink = () => navigator.share({ title: group.name, text: `Join my ajo group — ${group.name}`, url: joinUrl });
+                return (
+                  <>
+                    {/* Selectable URL input — works on mobile tap-to-select */}
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        readOnly
+                        value={joinUrl}
+                        onFocus={e => e.target.select()}
+                        onClick={e => e.target.select()}
+                        className="flex-1 px-3 py-2.5 rounded-lg border text-sm font-mono min-w-0"
+                        style={{background:"var(--surface)",borderColor:"var(--border)",color:"var(--text)"}}
+                      />
+                      <button
+                        onClick={copyLink}
+                        className="px-4 py-2.5 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 transition-colors"
+                        style={joinCopied
+                          ? {background:"#f0fdf4",color:"#16a34a",borderColor:"#86efac"}
+                          : {borderColor:"var(--border)",color:"var(--primary)"}}>
+                        {joinCopied ? <><Check size={14}/> Copied!</> : <><Copy size={14}/> Copy</>}
+                      </button>
                     </div>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard?.writeText(`${window.location.origin}/join/${joinToken}`);
-                        setJoinCopied(true);
-                        setTimeout(()=>setJoinCopied(false), 2000);
-                      }}
-                      className="px-4 py-2.5 rounded-lg border text-sm font-medium inline-flex items-center gap-1.5 shrink-0 transition-colors"
-                      style={joinCopied
-                        ? {background:"#f0fdf4",color:"#16a34a",borderColor:"#86efac"}
-                        : {borderColor:"var(--border)",color:"var(--primary)"}}>
-                      {joinCopied ? <><Check size={14}/> Copied!</> : <><Copy size={14}/> Copy link</>}
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between mt-3">
-                    <a href={`${window.location.origin}/join/${joinToken}`} target="_blank" rel="noreferrer"
-                      className="text-xs inline-flex items-center gap-1" style={{color:"var(--primary)"}}>
-                      <ExternalLink size={12}/> Preview join page
-                    </a>
-                    <button
-                      disabled={joinRegen}
-                      onClick={async () => {
-                        if (!window.confirm("Regenerate the link? The old link will stop working.")) return;
-                        setJoinRegen(true);
-                        try {
-                          const r = await api.post(`/admin/groups/${id}/regenerate-join-link`);
-                          setJoinToken(r.data.join_token);
-                        } finally { setJoinRegen(false); }
-                      }}
-                      className="text-xs inline-flex items-center gap-1" style={{color:"var(--muted)"}}>
-                      <RefreshCw size={11}/> {joinRegen ? "Regenerating…" : "Regenerate link"}
-                    </button>
-                  </div>
-                </>
-              )}
+                    {/* Mobile native share — only shown on devices that support it */}
+                    {typeof navigator.share === "function" && (
+                      <button
+                        onClick={shareLink}
+                        className="w-full py-2.5 rounded-lg border text-sm font-medium inline-flex items-center justify-center gap-2 mb-2"
+                        style={{borderColor:"var(--primary)",color:"var(--primary)"}}>
+                        <ExternalLink size={14}/> Share link
+                      </button>
+                    )}
+                    <div className="flex items-center justify-between mt-1">
+                      <a href={joinUrl} target="_blank" rel="noreferrer"
+                        className="text-xs inline-flex items-center gap-1" style={{color:"var(--primary)"}}>
+                        <ExternalLink size={12}/> Preview join page
+                      </a>
+                      <button
+                        disabled={joinRegen}
+                        onClick={async () => {
+                          if (!window.confirm("Regenerate the link? The old link will stop working.")) return;
+                          setJoinRegen(true);
+                          try {
+                            const r = await api.post(`/admin/groups/${id}/regenerate-join-link`);
+                            setJoinToken(r.data.join_token);
+                          } finally { setJoinRegen(false); }
+                        }}
+                        className="text-xs inline-flex items-center gap-1" style={{color:"var(--muted)"}}>
+                        <RefreshCw size={11}/> {joinRegen ? "Regenerating…" : "Regenerate link"}
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {/* ── Personal email invitations (optional, for tracking) ── */}

@@ -1,22 +1,29 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
 import { formatErr } from "../api";
 
 export default function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const nextPath = new URLSearchParams(location.search).get("next");
 
   const submit = async (e) => {
     e.preventDefault();
     setErr(""); setLoading(true);
     try {
       const u = await login(email, password);
-      nav(u.role === "admin" || u.role === "super_admin" ? "/admin" : "/dashboard");
+      if (nextPath) {
+        nav(nextPath);
+      } else {
+        nav(u.role === "admin" || u.role === "super_admin" ? "/admin" : "/dashboard");
+      }
     } catch (e) {
       setErr(formatErr(e?.response?.data?.detail) || "Login failed");
     } finally { setLoading(false); }
@@ -30,7 +37,13 @@ export default function Login() {
           <div className="font-display text-xl">Ajo</div>
         </Link>
         <h1 className="font-display text-3xl mb-2">Welcome back</h1>
-        <p className="text-sm mb-8" style={{ color: "var(--muted)" }}>Sign in to continue.</p>
+        {nextPath?.startsWith("/join/") ? (
+          <p className="text-sm mb-8 px-3 py-2.5 rounded-lg" style={{background:"#fef9c3",color:"#854d0e"}}>
+            Sign in to continue joining the group — you'll be taken right back.
+          </p>
+        ) : (
+          <p className="text-sm mb-8" style={{ color: "var(--muted)" }}>Sign in to continue.</p>
+        )}
         <form onSubmit={submit} className="space-y-4" data-testid="login-form">
           <div>
             <label className="label-eyebrow block mb-2">Email</label>

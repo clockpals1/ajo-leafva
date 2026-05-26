@@ -7,9 +7,10 @@ import { CheckCircle2, AlertTriangle, Users } from "lucide-react";
 export default function JoinPage() {
   const { token } = useParams();
   const nav = useNavigate();
-  const { user, refresh } = useAuth();
+  const { user, loading: authLoading, refresh } = useAuth();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [emailExists, setEmailExists] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -34,9 +35,9 @@ export default function JoinPage() {
     </div>
   );
 
-  if (!data) return (
+  if (!data || authLoading) return (
     <div className="min-h-screen bg-app flex items-center justify-center">
-      <div className="text-sm" style={{color:"var(--muted)"}}>Loading group…</div>
+      <div className="text-sm" style={{color:"var(--muted)"}}>Loading…</div>
     </div>
   );
 
@@ -68,7 +69,7 @@ export default function JoinPage() {
   const submit = async (e) => {
     e.preventDefault();
     if (!accepted) return setErr("You must accept the group rules to continue.");
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setEmailExists(false);
     try {
       const body = { accepted_rules: true };
       if (!user) { body.name = name; body.email = email; body.password = password; }
@@ -77,7 +78,15 @@ export default function JoinPage() {
       await refresh();
       setDone(true);
       setTimeout(() => nav(`/groups/${res.group_id}`), 1200);
-    } catch (e) { setErr(formatErr(e?.response?.data?.detail)); }
+    } catch (e) {
+      const status = e?.response?.status;
+      const msg = formatErr(e?.response?.data?.detail);
+      if (status === 409) {
+        setEmailExists(true);
+      } else {
+        setErr(msg);
+      }
+    }
     finally { setBusy(false); }
   };
 
@@ -176,6 +185,19 @@ export default function JoinPage() {
               I have read and accept the rules of <b>{group.name}</b>. I understand an admin must approve my payments.
             </span>
           </label>
+
+          {emailExists && (
+            <div className="mt-3 px-3 py-2.5 rounded-lg text-sm" style={{background:"#fef9c3",border:"1px solid #fcd34d",color:"#92400e"}} data-testid="join-email-exists">
+              <p className="font-semibold mb-1">Account already exists for this email.</p>
+              <p className="mb-2">Sign in first, then you'll be brought straight back here to join.</p>
+              <Link
+                to={`/login?next=/join/${token}`}
+                className="inline-flex items-center gap-1 font-semibold text-sm px-3 py-1.5 rounded-lg"
+                style={{background:"var(--primary)",color:"#fff"}}>
+                Sign in &amp; join →
+              </Link>
+            </div>
+          )}
 
           {err && (
             <div className="mt-3 px-3 py-2.5 rounded-lg text-sm font-medium" style={{background:"#fef2f2", color:"#b91c1c"}} data-testid="join-error">
