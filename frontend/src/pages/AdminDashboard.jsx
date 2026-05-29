@@ -1059,17 +1059,22 @@ export default function AdminDashboard() {
 
       {/* ── Review Payment Modal ── */}
       {reviewing && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={()=>setReviewing(null)}>
-          <div onClick={e=>e.stopPropagation()} className="bg-white rounded-xl max-w-4xl w-full p-6 grid md:grid-cols-2 gap-6 shadow-2xl" data-testid="review-modal">
-            <div>
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4" onClick={()=>setReviewing(null)}>
+          <div onClick={e=>e.stopPropagation()} className="bg-white w-full sm:max-w-4xl sm:rounded-xl rounded-t-2xl sm:p-6 p-4 grid md:grid-cols-2 gap-4 sm:gap-6 shadow-2xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto" data-testid="review-modal">
+            {/* Mobile drag handle */}
+            <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto sm:hidden mb-2" />
+            
+            <div className="order-2 md:order-1">
               <div className="label-eyebrow mb-2">Payment receipt</div>
-              {reviewing.receipt_data_url?.startsWith("data:image")
-                ? <img src={reviewing.receipt_data_url} alt="Receipt" className="w-full rounded-lg border" />
-                : <a href={reviewing.receipt_data_url} target="_blank" rel="noreferrer" className="text-sm underline">Open receipt file</a>
-              }
+              <div className="bg-gray-100 rounded-lg border overflow-hidden flex items-center justify-center min-h-[200px] max-h-[400px]">
+                {reviewing.receipt_data_url?.startsWith("data:image")
+                  ? <img src={reviewing.receipt_data_url} alt="Receipt" className="max-w-full max-h-[400px] object-contain" />
+                  : <a href={reviewing.receipt_data_url} target="_blank" rel="noreferrer" className="text-sm underline p-4">Open receipt file</a>
+                }
+              </div>
             </div>
-            <div className="flex flex-col">
-              <h3 className="font-display text-2xl mb-1">Review payment</h3>
+            <div className="flex flex-col order-1 md:order-2">
+              <h3 className="font-display text-xl sm:text-2xl mb-1">Review payment</h3>
               {reviewing.group_name && (
                 <span className="inline-block text-xs font-semibold mb-3 px-2 py-1 rounded" style={{background:"var(--surface)", color:"var(--primary)"}}>
                   {reviewing.group_name}
@@ -1092,10 +1097,10 @@ export default function AdminDashboard() {
                 <textarea value={reviewNote} onChange={e=>setReviewNote(e.target.value)} rows={3}
                   className="w-full border rounded px-3 py-2 text-sm" data-testid="review-note" />
               </div>
-              <div className="flex gap-2 mt-auto">
-                <button onClick={()=>decide("reject")} disabled={deciding} className="btn-secondary text-sm" style={{borderColor:"#b91c1c",color:"#b91c1c"}} data-testid="review-reject">{deciding ? "..." : "Reject"}</button>
-                <button onClick={()=>decide("approve")} disabled={deciding} className="btn-primary text-sm" data-testid="review-approve">{deciding ? "Saving..." : "✓ Approve"}</button>
-                <button onClick={()=>setReviewing(null)} className="ml-auto text-sm" style={{color:"var(--muted)"}} data-testid="review-close">Close</button>
+              <div className="flex gap-2 mt-auto pt-2 border-t sm:border-none" style={{borderColor:"var(--border)"}}>
+                <button onClick={()=>decide("reject")} disabled={deciding} className="btn-secondary text-sm flex-1 py-3" style={{borderColor:"#b91c1c",color:"#b91c1c"}} data-testid="review-reject">{deciding ? "..." : "Reject"}</button>
+                <button onClick={()=>decide("approve")} disabled={deciding} className="btn-primary text-sm flex-1 py-3" data-testid="review-approve">{deciding ? "Saving..." : "✓ Approve"}</button>
+                <button onClick={()=>setReviewing(null)} className="text-sm py-3 px-3" style={{color:"var(--muted)"}} data-testid="review-close">Close</button>
               </div>
             </div>
           </div>
