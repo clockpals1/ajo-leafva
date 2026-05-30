@@ -1090,13 +1090,14 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
         my_status = await db.member_cycle_status.find({"group_id": group_id, "user_id": user["id"]}, {"_id": 0}).to_list(1000)
 
     # ── Per-member payment status for the current active cycle (privacy-safe — status only, no amounts) ──
-    # Find the current active cycle: earliest with Due/Overdue status, else first pending cycle
-    due_rec = await db.member_cycle_status.find(
-        {"group_id": group_id, "status": {"$in": ["Due", "Overdue"]}},
+    # Find the current active cycle: earliest with Due/Overdue/Paid/Submitted status, else first pending cycle
+    # This ensures we show the most recent cycle with payment activity, not just cycles that are currently due
+    active_rec = await db.member_cycle_status.find(
+        {"group_id": group_id, "status": {"$in": ["Due", "Overdue", "Paid", "Submitted"]}},
         {"_id": 0, "cycle_no": 1}
     ).sort("cycle_no", 1).limit(1).to_list(1)
-    if due_rec:
-        active_cycle_no = due_rec[0]["cycle_no"]
+    if active_rec:
+        active_cycle_no = active_rec[0]["cycle_no"]
     else:
         first_pending = await db.cycles.find(
             {"group_id": group_id, "payout_status": {"$ne": "completed"}},
