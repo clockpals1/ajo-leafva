@@ -1705,20 +1705,21 @@ async def accept_invite(token: str, data: AcceptIn, request: Request, response: 
         raise HTTPException(404, "Group not found")
 
     current_user = None
-    cookie_tok = request.cookies.get("access_token")
-    if cookie_tok:
+    # Check Bearer token first (more reliable on mobile), then cookie
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        bearer = auth_header[7:]
         try:
-            payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
+            payload = jwt.decode(bearer, JWT_SECRET, algorithms=[JWT_ALG])
             current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         except Exception:
             pass
 
     if not current_user:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            bearer = auth_header[7:]
+        cookie_tok = request.cookies.get("access_token")
+        if cookie_tok:
             try:
-                payload = jwt.decode(bearer, JWT_SECRET, algorithms=[JWT_ALG])
+                payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
                 current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
             except Exception:
                 pass
@@ -1872,20 +1873,21 @@ async def accept_group_join(token: str, data: JoinIn, request: Request, response
         raise HTTPException(400, f"Group is {group.get('status', 'unavailable')}")
 
     current_user = None
-    cookie_tok = request.cookies.get("access_token")
-    if cookie_tok:
+    # Check Bearer token first (more reliable on mobile), then cookie
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        bearer = auth_header[7:]
         try:
-            payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
+            payload = jwt.decode(bearer, JWT_SECRET, algorithms=[JWT_ALG])
             current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
         except Exception:
             pass
 
     if not current_user:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            bearer = auth_header[7:]
+        cookie_tok = request.cookies.get("access_token")
+        if cookie_tok:
             try:
-                payload = jwt.decode(bearer, JWT_SECRET, algorithms=[JWT_ALG])
+                payload = jwt.decode(cookie_tok, JWT_SECRET, algorithms=[JWT_ALG])
                 current_user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
             except Exception:
                 pass
