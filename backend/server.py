@@ -887,6 +887,46 @@ async def mark_message_read(msg_id: str, admin=Depends(require_admin)):
     await db.member_messages.update_one({"id": msg_id}, {"$set": {"read": True}})
     return {"ok": True}
 
+class AdminReplyIn(BaseModel):
+    body: str
+
+@api.post("/admin/member-messages/{msg_id}/reply")
+async def reply_to_member_message(msg_id: str, data: AdminReplyIn, admin=Depends(require_admin)):
+    """Admin replies to a member's private message. Sends email and notification to the member."""
+    msg = await db.member_messages.find_one({"id": msg_id})
+    if not msg:
+        raise HTTPException(404, "Message not found")
+    
+    if not data.body.strip():
+        raise HTTPException(400, "Reply body is required")
+    
+    # Mark original message as read
+    await db.member_messages.update_one({"id": msg_id}, {"$set": {"read": True}})
+    
+    # Send reply via email
+    await send_email(
+        db,
+        msg["from_user_email"],
+        f"Re: {msg['subject']}",
+        f"Admin reply to your message",
+        f"<p><strong>Original message:</strong></p><p>{msg['body']}</p><hr><p><strong>Admin reply:</strong></p><p>{data.body}</p>",
+        cta_label="View group",
+        cta_link=f"{_primary_fe_url()}/groups/{msg['group_id']}"
+    )
+    
+    # Send notification
+    await push_notification(
+        msg["from_user_id"],
+        f"Re: {msg['subject']}",
+        data.body,
+        link=f"/groups/{msg['group_id']}"
+    )
+    
+    await log_audit(admin["id"], "admin_replied_to_member_message",
+                    meta={"message_id": msg_id, "group_id": msg["group_id"], "to_user_id": msg["from_user_id"]})
+    
+    return {"ok": True}
+
 # ---------------- PAYMENTS ----------------
 @api.post("/payments/upload")
 async def upload_payment(data: PaymentUpload, user=Depends(get_current_user)):

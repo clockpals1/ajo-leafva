@@ -85,6 +85,9 @@ export default function AdminGroupDetail() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerEdit, setLedgerEdit] = useState(null);
   const [ledgerSaving, setLedgerSaving] = useState(false);
+  const [replyTarget, setReplyTarget] = useState(null); // { id, subject, from_user_name }
+  const [replyBody, setReplyBody] = useState("");
+  const [replySending, setReplySending] = useState(false);
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -313,6 +316,19 @@ export default function AdminGroupDetail() {
     } finally { setLedgerSaving(false); }
   };
 
+  const sendReply = async () => {
+    if (!replyBody.trim() || replySending) return;
+    setReplySending(true);
+    try {
+      await api.post(`/admin/member-messages/${replyTarget.id}/reply`, { body: replyBody });
+      setReplyTarget(null);
+      setReplyBody("");
+      loadMessages();
+    } catch (e) {
+      alert(formatErr(e?.response?.data?.detail) || "Failed to send reply");
+    } finally { setReplySending(false); }
+  };
+
   // Build status matrix: members x cycles
   const statusMap = {};
   for (const s of statuses) statusMap[`${s.user_id}_${s.cycle_no}`] = s.status;
@@ -374,12 +390,18 @@ export default function AdminGroupDetail() {
                       {m.from_user_name} · {m.from_user_email} · {fmtDate(m.created_at)}
                     </div>
                   </div>
-                  {!m.read && (
-                    <button onClick={async()=>{ await api.patch(`/admin/member-messages/${m.id}/read`); loadMessages(); }}
-                      className="text-xs shrink-0 px-2 py-1 rounded" style={{background:"var(--surface)",color:"var(--primary)"}}>
-                      Mark read
+                  <div className="flex gap-2">
+                    {!m.read && (
+                      <button onClick={async()=>{ await api.patch(`/admin/member-messages/${m.id}/read`); loadMessages(); }}
+                        className="text-xs shrink-0 px-2 py-1 rounded" style={{background:"var(--surface)",color:"var(--primary)"}}>
+                        Mark read
+                      </button>
+                    )}
+                    <button onClick={()=>{ setReplyTarget({ id: m.id, subject: m.subject, from_user_name: m.from_user_name }); setReplyBody(""); }}
+                      className="text-xs shrink-0 px-2 py-1 rounded" style={{background:"var(--primary)",color:"#fff"}}>
+                      Reply
                     </button>
-                  )}
+                  </div>
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap leading-relaxed">{m.body}</div>
               </div>
@@ -1229,6 +1251,40 @@ export default function AdminGroupDetail() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Reply to member message modal */}
+      {replyTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onClick={()=>setReplyTarget(null)}>
+          <div onClick={e=>e.stopPropagation()} className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-xl p-5 sm:p-6">
+            <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4 sm:hidden" />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-lg">Reply to {replyTarget.from_user_name}</h3>
+              <button onClick={()=>setReplyTarget(null)} className="p-1 opacity-60 hover:opacity-100"><X size={18}/></button>
+            </div>
+            <div className="mb-4 p-3 rounded-lg text-sm" style={{background:"var(--surface)",borderColor:"var(--border)",border:"1px solid"}}>
+              <div className="font-semibold mb-1">{replyTarget.subject}</div>
+              <div className="text-xs" style={{color:"var(--muted)"}}>Original message from {replyTarget.from_user_name}</div>
+            </div>
+            <div className="mb-4">
+              <label className="form-label">Your reply</label>
+              <textarea 
+                value={replyBody}
+                onChange={e=>setReplyBody(e.target.value)}
+                rows={4}
+                className="form-input"
+                placeholder="Type your reply here..."
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={()=>setReplyTarget(null)} disabled={replySending} className="btn-secondary flex-1 text-sm">Cancel</button>
+              <button onClick={sendReply} disabled={replySending || !replyBody.trim()} className="btn-primary flex-1 text-sm">
+                {replySending ? "Sending..." : "Send Reply"}
+              </button>
+            </div>
           </div>
         </div>
       )}
