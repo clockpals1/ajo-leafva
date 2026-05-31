@@ -318,16 +318,25 @@ def _add_period(start: date, frequency: str, n: int) -> date:
     return date(year, month, day)
 
 def _add_period_with_day(start: date, frequency: str, n: int, due_day: int) -> date:
-    """Like _add_period but uses explicit due_day for the day-of-month in monthly cycles."""
+    """Like _add_period but uses explicit due_day for the day-of-month in monthly cycles.
+    If due_day is 31 or higher, use the last day of the month."""
     if frequency == "weekly":
         return start + timedelta(weeks=n)
     if frequency == "biweekly":
         return start + timedelta(weeks=2*n)
-    # monthly — honour due_day
+    # monthly — honour due_day (31 = last day of month)
     month = start.month - 1 + n
     year = start.year + month // 12
     month = month % 12 + 1
-    day = min(due_day, 28)
+    if due_day >= 31:
+        # Last day of the month
+        if month == 12:
+            last_day = 31
+        else:
+            last_day = (date(year, month + 1, 1) - timedelta(days=1)).day
+        day = last_day
+    else:
+        day = min(due_day, 28)
     return date(year, month, day)
 
 @api.post("/admin/groups")
@@ -2211,6 +2220,79 @@ async def send_targeted_message(data: TargetedMessageIn, admin=Depends(require_a
                     meta={"group_id": data.group_id, "recipients": sent_count, "filter": data.payment_status_filter})
     
     return {"ok": True, "sent": sent_count}
+
+# ---------------- MANUAL LEDGER MANAGEMENT ----------------
+class ManualLedgerUpdate(BaseModel):
+    group_id: str
+    user_id: str
+    cycle_no: int
+    status: Literal["Not_Due", "Due", "Overdue", "Submitted", "Paid", "Rejected", "Payout_Completed"]
+    paid_amount: Optional[float] = None
+    note: Optional[str] = None
+
+@api.post("/admin/ledger/manual-update")
+async def manual_ledger_update(data: ManualLedgerUpdate, admin=Depends(require_admin)):
+    """Allow admin to manually update a member's cycle status in the ledger."""
+    # Verify group exists
+    group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Group not found")
+    
+    # Verify cycle exists
+    cycle = await db.cycles.find_one({"group_id": data.group_id, "cycle_no": data.cycle_no}, {"_id": 0})
+    if not cycle:
+        raise HTTPException(404, "Cycle not found")
+    
+    # Verify user is a member
+    member = await db.group_members.find_one({"group_id": data.group_id, "user_id": data.user_id}, {"_id": 0})
+    if not member:
+        raise HTTPException(404, "User is not a member of this group")
+    
+    # Build update document
+    update_doc = {
+        "status": data.status,
+        "updated_at": now_utc().isoformat(),
+        "manual_override": True,
+        "manual_override_by": admin["id"],
+        "manual_override_at": now_utc().isoformat(),
+    }
+    
+    if data.paid_amount is not None:
+        update_doc["paid_amount"] = data.paid_amount
+    if data.note:
+        update_doc["manual_override_note"] = data.note
+    
+    # Update or create the member_cycle_status record
+    result = await db.member_cycle_status.update_one(
+        {"group_id": data.group_id, "cycle_no": data.cycle_no, "user_id": data.user_id},
+        {"$set": update_doc},
+        upsert=True
+    )
+    
+    await log_audit(admin["id"], "manual_ledger_update",
+                    meta={"group_id": data.group_id, "user_id": data.user_id, 
+                          "cycle_no": data.cycle_no, "status": data.status, 
+                          "note": data.note})
+    
+    return {"ok": True, "updated": result.modified_count > 0 or result.upserted_id is not None}
+
+@api.get("/admin/ledger/{group_id}/{user_id}")
+async def get_member_ledger(group_id: str, user_id: str, admin=Depends(require_admin)):
+    """Get full ledger history for a specific member in a group."""
+    statuses = await db.member_cycle_status.find(
+        {"group_id": group_id, "user_id": user_id},
+        {"_id": 0}
+    ).sort("cycle_no", 1).to_list(200)
+    
+    # Add cycle due dates
+    for s in statuses:
+        cycle = await db.cycles.find_one(
+            {"group_id": group_id, "cycle_no": s["cycle_no"]},
+            {"_id": 0, "due_date": 1}
+        )
+        s["due_date"] = cycle["due_date"] if cycle else None
+    
+    return {"ledger": statuses}
 
 # ---------------- MIDDLEWARE & LOGGING ----------------
 _raw_origins = os.environ.get("FRONTEND_URL", "http://localhost:3000")

@@ -79,6 +79,12 @@ export default function AdminGroupDetail() {
   const [removeBusy, setRemoveBusy] = useState(false);
   const [addSlotBusy, setAddSlotBusy] = useState(false);
   const [posBusy, setPosBusy] = useState(null);
+  const [ledgerOpen, setLedgerOpen] = useState(false);
+  const [ledgerUser, setLedgerUser] = useState(null);
+  const [ledgerData, setLedgerData] = useState([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerEdit, setLedgerEdit] = useState(null);
+  const [ledgerSaving, setLedgerSaving] = useState(false);
 
   const load = async () => {
     const [d, u] = await Promise.all([
@@ -265,6 +271,48 @@ export default function AdminGroupDetail() {
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
   };
 
+  const openLedger = async (userId) => {
+    setLedgerUser(userId);
+    setLedgerOpen(true);
+    setLedgerLoading(true);
+    setLedgerData([]);
+    try {
+      const { data } = await api.get(`/admin/ledger/${id}/${userId}`);
+      setLedgerData(data.ledger || []);
+    } catch (e) {
+      alert(formatErr(e?.response?.data?.detail) || "Failed to load ledger");
+    } finally { setLedgerLoading(false); }
+  };
+
+  const startLedgerEdit = (entry) => {
+    setLedgerEdit({
+      cycle_no: entry.cycle_no,
+      status: entry.status,
+      paid_amount: entry.paid_amount || "",
+      note: entry.manual_override_note || "",
+    });
+  };
+
+  const saveLedgerEdit = async () => {
+    if (!ledgerEdit || ledgerSaving) return;
+    setLedgerSaving(true);
+    try {
+      await api.post("/admin/ledger/manual-update", {
+        group_id: id,
+        user_id: ledgerUser,
+        cycle_no: ledgerEdit.cycle_no,
+        status: ledgerEdit.status,
+        paid_amount: ledgerEdit.paid_amount ? Number(ledgerEdit.paid_amount) : null,
+        note: ledgerEdit.note || null,
+      });
+      setLedgerEdit(null);
+      openLedger(ledgerUser); // reload
+      load(); // refresh main view
+    } catch (e) {
+      alert(formatErr(e?.response?.data?.detail) || "Failed to update ledger");
+    } finally { setLedgerSaving(false); }
+  };
+
   // Build status matrix: members x cycles
   const statusMap = {};
   for (const s of statuses) statusMap[`${s.user_id}_${s.cycle_no}`] = s.status;
@@ -371,12 +419,20 @@ export default function AdminGroupDetail() {
                             <span className="text-xs px-2 py-0.5 rounded mt-1 inline-block" style={{background:"#fee2e2",color:"#991b1b"}}>Bank not set</span>
                           )}
                         </div>
-                        <button
-                          onClick={()=>{ setAddSlotTarget({id:m.user_id,email:m.user_email,name:m.user_name}); setAddSlotPos(""); setAddSlotErr(""); }}
-                          className="shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1"
-                          style={{background:"var(--primary)15",color:"var(--primary)"}}>
-                          <Plus size={11}/> Add slot
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={()=>openLedger(m.user_id)}
+                            className="shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1"
+                            style={{background:"var(--surface)",color:"var(--muted)"}} title="Manage ledger">
+                            <RefreshCcw size={11}/> Ledger
+                          </button>
+                          <button
+                            onClick={()=>{ setAddSlotTarget({id:m.user_id,email:m.user_email,name:m.user_name}); setAddSlotPos(""); setAddSlotErr(""); }}
+                            className="shrink-0 text-xs font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1"
+                            style={{background:"var(--primary)15",color:"var(--primary)"}}>
+                            <Plus size={11}/> Add slot
+                          </button>
+                        </div>
                       </div>
                       <div className="space-y-1.5 mb-2">
                         {slots.map(s => {
@@ -459,12 +515,20 @@ export default function AdminGroupDetail() {
                               </div>
                             );
                           })}
-                          <button
-                            onClick={()=>{ setAddSlotTarget({id:m.user_id,email:m.user_email,name:m.user_name}); setAddSlotPos(""); setAddSlotErr(""); }}
-                            className="text-xs font-semibold inline-flex items-center gap-1 mt-1 opacity-70 hover:opacity-100"
-                            style={{color:"var(--primary)"}}>
-                            <Plus size={11}/> Add slot
-                          </button>
+                          <div className="flex gap-2 mt-1">
+                            <button
+                              onClick={()=>openLedger(m.user_id)}
+                              className="text-xs font-semibold inline-flex items-center gap-1 opacity-70 hover:opacity-100"
+                              style={{color:"var(--muted)"}} title="Manage ledger">
+                              <RefreshCcw size={11}/> Ledger
+                            </button>
+                            <button
+                              onClick={()=>{ setAddSlotTarget({id:m.user_id,email:m.user_email,name:m.user_name}); setAddSlotPos(""); setAddSlotErr(""); }}
+                              className="text-xs font-semibold inline-flex items-center gap-1 opacity-70 hover:opacity-100"
+                              style={{color:"var(--primary)"}}>
+                              <Plus size={11}/> Add slot
+                            </button>
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -1069,6 +1133,102 @@ export default function AdminGroupDetail() {
                 {removeBusy ? "Removing..." : "Remove member"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual ledger management modal */}
+      {ledgerOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onClick={()=>setLedgerOpen(false)}>
+          <div onClick={e=>e.stopPropagation()} className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-xl p-5 sm:p-6 max-h-[90vh] overflow-y-auto">
+            <div className="w-10 h-1 bg-gray-200 rounded-full mx-auto mb-4 sm:hidden" />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-lg">Manual Ledger Management</h3>
+              <button onClick={()=>setLedgerOpen(false)} className="p-1 opacity-60 hover:opacity-100"><X size={18}/></button>
+            </div>
+            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>
+              Manually update payment status for this member. Use this only if automatic tracking is incorrect.
+              All changes are logged in the audit trail.
+            </p>
+            {ledgerLoading ? (
+              <div className="text-center py-8 text-sm" style={{color:"var(--muted)"}}>Loading ledger...</div>
+            ) : (
+              <div className="space-y-2">
+                {ledgerData.length === 0 ? (
+                  <div className="text-center py-8 text-sm" style={{color:"var(--muted)"}}>No ledger entries found</div>
+                ) : (
+                  ledgerData.map((entry, idx) => (
+                    <div key={idx} className="border rounded-lg p-3 text-sm" style={{borderColor:"var(--border)"}}>
+                      {ledgerEdit?.cycle_no === entry.cycle_no ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold">Cycle {entry.cycle_no}</span>
+                            <span className="text-xs" style={{color:"var(--muted)"}}>Due: {entry.due_date || "N/A"}</span>
+                          </div>
+                          <div>
+                            <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Status</label>
+                            <select 
+                              value={ledgerEdit.status} 
+                              onChange={e=>setLedgerEdit(prev=>({...prev, status: e.target.value}))}
+                              className="w-full border rounded px-2 py-1.5 text-sm"
+                            >
+                              <option value="Not_Due">Not_Due</option>
+                              <option value="Due">Due</option>
+                              <option value="Overdue">Overdue</option>
+                              <option value="Submitted">Submitted</option>
+                              <option value="Paid">Paid</option>
+                              <option value="Rejected">Rejected</option>
+                              <option value="Payout_Completed">Payout_Completed</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Paid Amount (optional)</label>
+                            <input 
+                              type="number" 
+                              value={ledgerEdit.paid_amount} 
+                              onChange={e=>setLedgerEdit(prev=>({...prev, paid_amount: e.target.value}))}
+                              className="w-full border rounded px-2 py-1.5 text-sm"
+                              placeholder="e.g. 5000"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Note (optional)</label>
+                            <input 
+                              value={ledgerEdit.note} 
+                              onChange={e=>setLedgerEdit(prev=>({...prev, note: e.target.value}))}
+                              className="w-full border rounded px-2 py-1.5 text-sm"
+                              placeholder="Reason for manual override"
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={()=>setLedgerEdit(null)} disabled={ledgerSaving} className="btn-secondary text-sm flex-1">Cancel</button>
+                            <button onClick={saveLedgerEdit} disabled={ledgerSaving} className="btn-primary text-sm flex-1">
+                              {ledgerSaving ? "Saving..." : "Save"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="font-semibold">Cycle {entry.cycle_no}</div>
+                            <div className="text-xs" style={{color:"var(--muted)"}}>Due: {entry.due_date || "N/A"}</div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <StatusBadge status={entry.status} />
+                            {entry.manual_override && (
+                              <span className="text-xs px-2 py-0.5 rounded" style={{background:"#fef3c7",color:"#92400e"}}>Manual</span>
+                            )}
+                            <button onClick={()=>startLedgerEdit(entry)} className="p-1.5 rounded hover:bg-gray-100" title="Edit">
+                              <Pencil size={14} style={{color:"var(--muted)"}}/>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
