@@ -62,6 +62,8 @@ export default function AdminDashboard() {
   const [msgFilter, setMsgFilter] = useState("Due");
   const [msgSending, setMsgSending] = useState(false);
   const [msgResult, setMsgResult] = useState("");
+  const [msgMode, setMsgMode] = useState("group"); // "group" or "individual"
+  const [msgSelectedUsers, setMsgSelectedUsers] = useState([]);
 
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [addUserForm, setAddUserForm] = useState({ name: "", email: "", phone: "", group_id: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
@@ -219,17 +221,21 @@ export default function AdminDashboard() {
   };
 
   const sendTargetedMessage = async () => {
-    if (!msgTitle.trim() || !msgBody.trim() || !msgGroupId) return;
+    if (!msgTitle.trim() || !msgBody.trim()) return;
+    if (msgMode === "group" && !msgGroupId) return;
+    if (msgMode === "individual" && msgSelectedUsers.length === 0) return;
+    
     setMsgSending(true); setMsgResult("");
     try {
-      const { data } = await api.post("/admin/send-targeted", {
+      const payload = {
         title: msgTitle,
         body: msgBody,
-        group_id: msgGroupId,
-        user_ids: [],
-        payment_status_filter: msgFilter,
-      });
-      setMsgResult(`Sent to ${data.sent} member(s).`);
+        group_id: msgMode === "group" ? msgGroupId : null,
+        user_ids: msgMode === "individual" ? msgSelectedUsers : [],
+        payment_status_filter: msgMode === "group" ? msgFilter : null,
+      };
+      const { data } = await api.post("/admin/send-targeted", payload);
+      setMsgResult(`Sent to ${data.sent} recipient(s).`);
       setTimeout(() => { setMessageOpen(false); setMsgResult(""); }, 2000);
     } catch (e) {
       setMsgResult(e?.response?.data?.detail || "Failed to send message.");
@@ -1192,23 +1198,64 @@ export default function AdminDashboard() {
               <Wand2 size={18} style={{color:"var(--primary)"}} />
               <h3 className="font-display text-xl">AI Message Composer</h3>
             </div>
-            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Generate a message with AI, preview it, then send to specific members by payment status.</p>
+            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Generate a message with AI, preview it, then send to specific users or group members.</p>
             
             {!msgTitle && !msgBody ? (
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Group</label>
-                  <select value={msgGroupId} onChange={e=>setMsgGroupId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
-                    <option value="">Select a group...</option>
-                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
+                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Recipient Mode</label>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={()=>setMsgMode("group")}
+                      className={`flex-1 text-xs px-3 py-2 rounded-lg border ${msgMode==="group"?"btn-primary":"border-gray-300"}`}
+                    >
+                      Group Members
+                    </button>
+                    <button 
+                      onClick={()=>setMsgMode("individual")}
+                      className={`flex-1 text-xs px-3 py-2 rounded-lg border ${msgMode==="individual"?"btn-primary":"border-gray-300"}`}
+                    >
+                      Individual Users
+                    </button>
+                  </div>
                 </div>
+                {msgMode === "group" ? (
+                  <div>
+                    <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Group</label>
+                    <select value={msgGroupId} onChange={e=>setMsgGroupId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
+                      <option value="">Select a group...</option>
+                      {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Select Users</label>
+                    <div className="border rounded px-3 py-2 text-sm max-h-40 overflow-y-auto">
+                      {users.map(u => (
+                        <label key={u.id} className="flex items-center gap-2 py-1 cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={msgSelectedUsers.includes(u.id)}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                setMsgSelectedUsers([...msgSelectedUsers, u.id]);
+                              } else {
+                                setMsgSelectedUsers(msgSelectedUsers.filter(id => id !== u.id));
+                              }
+                            }}
+                          />
+                          <span>{u.name} ({u.email})</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>What do you want to say?</label>
                   <textarea 
                     value={msgPrompt} 
                     onChange={e=>setMsgPrompt(e.target.value)} 
-                    placeholder="e.g., Remind members who haven't paid for this cycle" 
+                    placeholder={msgMode === "group" ? "e.g., Remind members who haven't paid for this cycle" : "e.g., Send a reminder about account setup"}
                     rows={3} 
                     className="w-full border rounded px-3 py-2 text-sm" 
                   />
@@ -1225,7 +1272,7 @@ export default function AdminDashboard() {
                 {msgResult && <div className="text-sm font-medium" style={{color:msgResult.includes("failed")?"#b91c1c":"var(--primary)"}}>{msgResult}</div>}
                 <button 
                   onClick={generateMessage} 
-                  disabled={msgGenerating || !msgPrompt.trim()} 
+                  disabled={msgGenerating || !msgPrompt.trim() || (msgMode === "group" && !msgGroupId) || (msgMode === "individual" && msgSelectedUsers.length === 0)} 
                   className="btn-primary w-full text-sm inline-flex items-center justify-center gap-2"
                 >
                   {msgGenerating ? <><Loader2 size={14} className="animate-spin"/> Generating...</> : <><Sparkles size={14}/> Generate with AI</>}
@@ -1238,16 +1285,22 @@ export default function AdminDashboard() {
                   <div className="font-semibold text-sm mb-2">{msgTitle}</div>
                   <div className="text-sm whitespace-pre-wrap">{msgBody}</div>
                 </div>
-                <div>
-                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Send to members with status:</label>
-                  <select value={msgFilter} onChange={e=>setMsgFilter(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
-                    <option value="Due">Due (not yet paid)</option>
-                    <option value="Overdue">Overdue (past due date)</option>
-                    <option value="Not_Due">Not_Due (upcoming)</option>
-                    <option value="Submitted">Submitted (awaiting approval)</option>
-                    <option value="Paid">Paid (already paid)</option>
-                  </select>
-                </div>
+                {msgMode === "group" ? (
+                  <div>
+                    <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Send to members with status:</label>
+                    <select value={msgFilter} onChange={e=>setMsgFilter(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
+                      <option value="Due">Due (not yet paid)</option>
+                      <option value="Overdue">Overdue (past due date)</option>
+                      <option value="Not_Due">Not_Due (upcoming)</option>
+                      <option value="Submitted">Submitted (awaiting approval)</option>
+                      <option value="Paid">Paid (already paid)</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="text-xs" style={{color:"var(--muted)"}}>
+                    Sending to {msgSelectedUsers.length} selected user(s)
+                  </div>
+                )}
                 {msgResult && <div className="text-sm font-medium" style={{color:msgResult.includes("Sent")?"#16a34a":"var(--primary)"}}>{msgResult}</div>}
                 <div className="flex gap-2">
                   <button onClick={()=>{setMsgTitle(""); setMsgBody(""); setMsgResult("");}} className="btn-secondary text-sm flex-1">Regenerate</button>

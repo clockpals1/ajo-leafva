@@ -2140,7 +2140,7 @@ class AIMessageIn(BaseModel):
 class TargetedMessageIn(BaseModel):
     title: str
     body: str
-    group_id: str
+    group_id: Optional[str] = None  # Optional: if provided, link to group
     user_ids: List[str]  # specific recipients
     payment_status_filter: Optional[Literal["Due", "Overdue", "Paid", "Submitted", "Not_Due"]] = None
 
@@ -2176,18 +2176,20 @@ Format your response as JSON with keys: "title" (short subject line) and "body" 
 
 @api.post("/admin/send-targeted")
 async def send_targeted_message(data: TargetedMessageIn, admin=Depends(require_admin)):
-    """Send message to specific members or filter by payment status."""
+    """Send message to specific users. Can filter by payment status within a group, or send to specific user_ids without group context."""
     settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
     fe = _get_fe_url(settings)
-    group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
-    if not group:
-        raise HTTPException(404, "Group not found")
     
     # Determine recipients
     recipients = []
     
     if data.payment_status_filter:
-        # Filter by payment status for the current active cycle
+        # Filter by payment status - requires group_id
+        if not data.group_id:
+            raise HTTPException(400, "group_id is required when using payment_status_filter")
+        group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+        if not group:
+            raise HTTPException(404, "Group not found")
         active_rec = await db.member_cycle_status.find(
             {"group_id": data.group_id, "status": data.payment_status_filter},
             {"_id": 0, "user_id": 1}
@@ -2207,13 +2209,24 @@ async def send_targeted_message(data: TargetedMessageIn, admin=Depends(require_a
     for user_id in recipients:
         u = await db.users.find_one({"id": user_id}, {"_id": 0})
         if u and u.get("email"):
+            # If group_id provided, link to group; otherwise link to dashboard
+            if data.group_id:
+                group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+                cta_label = f"View {group['name']}" if group else "View Dashboard"
+                cta_link = f"{fe}/groups/{data.group_id}"
+                notification_link = f"/groups/{data.group_id}"
+            else:
+                cta_label = "View Dashboard"
+                cta_link = f"{fe}/dashboard"
+                notification_link = "/dashboard"
+            
             await send_email(
                 db, u["email"],
                 data.title, data.title, data.body,
-                cta_label=f"View {group['name']}",
-                cta_link=f"{fe}/groups/{data.group_id}"
+                cta_label=cta_label,
+                cta_link=cta_link
             )
-            await push_notification(user_id, data.title, data.body, link=f"/groups/{data.group_id}")
+            await push_notification(user_id, data.title, data.body, link=notification_link)
             sent_count += 1
     
     await log_audit(admin["id"], "targeted_message_sent",
