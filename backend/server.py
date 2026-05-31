@@ -2209,7 +2209,22 @@ Format your response as JSON with keys: "title" (short subject line) and "body" 
     try:
         raw = await call_groq(api_key, system_prompt, user_prompt, model)
         import json
-        parsed = json.loads(raw)
+        # Try to parse JSON directly
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            # If raw response isn't JSON, try to extract JSON from markdown code blocks
+            import re
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(1))
+            else:
+                # Fallback: try to find any JSON-like structure
+                json_match = re.search(r'\{.*?\}', raw, re.DOTALL)
+                if json_match:
+                    parsed = json.loads(json_match.group(0))
+                else:
+                    raise HTTPException(500, f"AI returned non-JSON response: {raw[:500]}")
         return {"title": parsed.get("title", ""), "body": parsed.get("body", "")}
     except Exception as e:
         raise HTTPException(500, f"AI generation failed: {str(e)}")
