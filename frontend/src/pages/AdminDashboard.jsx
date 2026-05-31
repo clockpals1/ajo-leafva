@@ -52,6 +52,17 @@ export default function AdminDashboard() {
   const [aiError, setAiError] = useState("");
   const [aiMode, setAiMode] = useState(false);
 
+  const [messageOpen, setMessageOpen] = useState(false);
+  const [msgPrompt, setMsgPrompt] = useState("");
+  const [msgContext, setMsgContext] = useState("");
+  const [msgGroupId, setMsgGroupId] = useState("");
+  const [msgGenerating, setMsgGenerating] = useState(false);
+  const [msgTitle, setMsgTitle] = useState("");
+  const [msgBody, setMsgBody] = useState("");
+  const [msgFilter, setMsgFilter] = useState("Due");
+  const [msgSending, setMsgSending] = useState(false);
+  const [msgResult, setMsgResult] = useState("");
+
   const [addUserOpen, setAddUserOpen] = useState(false);
   const [addUserForm, setAddUserForm] = useState({ name: "", email: "", phone: "", group_id: "", payout_position: "", use_alias: false, display_name: "", visibility_preference: "visible" });
   const [addUserErr, setAddUserErr] = useState("");
@@ -191,6 +202,40 @@ export default function AdminDashboard() {
     finally { setResetPwBusy(false); }
   };
 
+  const generateMessage = async () => {
+    if (!msgPrompt.trim()) return;
+    setMsgGenerating(true); setMsgResult("");
+    try {
+      const { data } = await api.post("/admin/ai/generate-message", {
+        prompt: msgPrompt,
+        context: msgContext,
+        group_id: msgGroupId || null,
+      });
+      setMsgTitle(data.title);
+      setMsgBody(data.body);
+    } catch (e) {
+      setMsgResult(e?.response?.data?.detail || "AI generation failed. Check OpenAI API key.");
+    } finally { setMsgGenerating(false); }
+  };
+
+  const sendTargetedMessage = async () => {
+    if (!msgTitle.trim() || !msgBody.trim() || !msgGroupId) return;
+    setMsgSending(true); setMsgResult("");
+    try {
+      const { data } = await api.post("/admin/send-targeted", {
+        title: msgTitle,
+        body: msgBody,
+        group_id: msgGroupId,
+        user_ids: [],
+        payment_status_filter: msgFilter,
+      });
+      setMsgResult(`Sent to ${data.sent} member(s).`);
+      setTimeout(() => { setMessageOpen(false); setMsgResult(""); }, 2000);
+    } catch (e) {
+      setMsgResult(e?.response?.data?.detail || "Failed to send message.");
+    } finally { setMsgSending(false); }
+  };
+
   const deleteUser = async (u) => {
     if (actionBusyId) return;
     if (!window.confirm(`Delete ${u.name} (${u.email})? This removes the user and all their group memberships. This cannot be undone.`)) return;
@@ -265,6 +310,9 @@ export default function AdminDashboard() {
             <h1 className="font-display text-3xl sm:text-4xl">Operations Overview</h1>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button onClick={()=>setMessageOpen(true)} className="btn-secondary text-sm inline-flex items-center gap-1.5">
+              <Wand2 size={14}/> AI Message
+            </button>
             <button onClick={()=>setBroadcastOpen(true)} className="btn-secondary text-sm inline-flex items-center gap-1.5">
               <Megaphone size={14}/> Broadcast
             </button>
@@ -1133,6 +1181,87 @@ export default function AdminDashboard() {
               <button type="submit" disabled={broadcasting} className="btn-primary text-sm inline-flex items-center gap-1.5"><Megaphone size={13}/>{broadcasting ? "Sending..." : "Send to all"}</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ── AI Message Composer Modal ── */}
+      {messageOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50" onClick={()=>setMessageOpen(false)}>
+          <div onClick={e=>e.stopPropagation()} className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-2 mb-1">
+              <Wand2 size={18} style={{color:"var(--primary)"}} />
+              <h3 className="font-display text-xl">AI Message Composer</h3>
+            </div>
+            <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Generate a message with AI, preview it, then send to specific members by payment status.</p>
+            
+            {!msgTitle && !msgBody ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Group</label>
+                  <select value={msgGroupId} onChange={e=>setMsgGroupId(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
+                    <option value="">Select a group...</option>
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>What do you want to say?</label>
+                  <textarea 
+                    value={msgPrompt} 
+                    onChange={e=>setMsgPrompt(e.target.value)} 
+                    placeholder="e.g., Remind members who haven't paid for this cycle" 
+                    rows={3} 
+                    className="w-full border rounded px-3 py-2 text-sm" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Additional context (optional)</label>
+                  <input 
+                    value={msgContext} 
+                    onChange={e=>setMsgContext(e.target.value)} 
+                    placeholder="e.g., Cycle 3, due in 2 days" 
+                    className="w-full border rounded px-3 py-2 text-sm" 
+                  />
+                </div>
+                {msgResult && <div className="text-sm font-medium" style={{color:msgResult.includes("failed")?"#b91c1c":"var(--primary)"}}>{msgResult}</div>}
+                <button 
+                  onClick={generateMessage} 
+                  disabled={msgGenerating || !msgPrompt.trim()} 
+                  className="btn-primary w-full text-sm inline-flex items-center justify-center gap-2"
+                >
+                  {msgGenerating ? <><Loader2 size={14} className="animate-spin"/> Generating...</> : <><Sparkles size={14}/> Generate with AI</>}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-4 rounded-lg border" style={{background:"var(--surface)",borderColor:"var(--border)"}}>
+                  <div className="label-eyebrow mb-2">Preview</div>
+                  <div className="font-semibold text-sm mb-2">{msgTitle}</div>
+                  <div className="text-sm whitespace-pre-wrap">{msgBody}</div>
+                </div>
+                <div>
+                  <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Send to members with status:</label>
+                  <select value={msgFilter} onChange={e=>setMsgFilter(e.target.value)} className="w-full border rounded px-3 py-2 text-sm">
+                    <option value="Due">Due (not yet paid)</option>
+                    <option value="Overdue">Overdue (past due date)</option>
+                    <option value="Not_Due">Not_Due (upcoming)</option>
+                    <option value="Submitted">Submitted (awaiting approval)</option>
+                    <option value="Paid">Paid (already paid)</option>
+                  </select>
+                </div>
+                {msgResult && <div className="text-sm font-medium" style={{color:msgResult.includes("Sent")?"#16a34a":"var(--primary)"}}>{msgResult}</div>}
+                <div className="flex gap-2">
+                  <button onClick={()=>{setMsgTitle(""); setMsgBody(""); setMsgResult("");}} className="btn-secondary text-sm flex-1">Regenerate</button>
+                  <button 
+                    onClick={sendTargetedMessage} 
+                    disabled={msgSending} 
+                    className="btn-primary text-sm flex-1 inline-flex items-center justify-center gap-2"
+                  >
+                    {msgSending ? <><Loader2 size={14} className="animate-spin"/> Sending...</> : <><Megaphone size={14}/> Send</>}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

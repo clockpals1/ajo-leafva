@@ -19,6 +19,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from email_service import send_email, send_email_with_error, _wrap as _email_wrap
 from twilio_service import send_whatsapp
+from openai import AsyncOpenAI
 
 # ---------------- DB & APP ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -30,6 +31,17 @@ api = APIRouter(prefix="/api")
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALG = "HS256"
+
+# ---------------- AI CLIENT ----------------
+_openai_client = None
+def get_openai_client():
+    global _openai_client
+    if _openai_client is None:
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        _openai_client = AsyncOpenAI(api_key=api_key)
+    return _openai_client
 
 # ---------------- HELPERS ----------------
 def now_utc():
@@ -2121,6 +2133,102 @@ async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
     await log_audit(admin["id"], "admin_broadcast",
                     meta={"scope": "all", "groups": len(groups), "members": len(sent)})
     return {"ok": True, "scope": "all", "groups": len(groups)}
+
+# ---------------- AI-POWERED MESSAGING ----------------
+class AIMessageIn(BaseModel):
+    prompt: str
+    context: Optional[str] = None  # e.g., "remind unpaid members for cycle 3"
+    group_id: Optional[str] = None
+
+class TargetedMessageIn(BaseModel):
+    title: str
+    body: str
+    group_id: str
+    user_ids: List[str]  # specific recipients
+    payment_status_filter: Optional[Literal["Due", "Overdue", "Paid", "Submitted", "Not_Due"]] = None
+
+@api.post("/admin/ai/generate-message")
+async def generate_ai_message(data: AIMessageIn, admin=Depends(require_admin)):
+    """Generate a message using AI based on admin's prompt. Returns preview only — doesn't send."""
+    client = get_openai_client()
+    if not client:
+        raise HTTPException(400, "OpenAI API key not configured. Set OPENAI_API_KEY environment variable.")
+    
+    # Build context about the group if provided
+    group_context = ""
+    if data.group_id:
+        group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+        if group:
+            group_context = f"\nGroup: {group['name']}\nContribution: {group['contribution_amount']} NGN\nFrequency: {group['frequency']}"
+    
+    system_prompt = """You are an Ajo (savings group) admin assistant. Write short, friendly, professional messages for group members.
+Keep messages under 150 words. Be encouraging but clear about payment expectations.
+Format your response as JSON with keys: "title" (short subject line) and "body" (message content)."""
+    
+    user_prompt = f"Prompt: {data.prompt}\n{data.context or ''}{group_context}"
+    
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        content = response.choices[0].message.content
+        import json
+        parsed = json.loads(content)
+        return {"title": parsed.get("title", ""), "body": parsed.get("body", "")}
+    except Exception as e:
+        raise HTTPException(500, f"AI generation failed: {str(e)}")
+
+@api.post("/admin/send-targeted")
+async def send_targeted_message(data: TargetedMessageIn, admin=Depends(require_admin)):
+    """Send message to specific members or filter by payment status."""
+    settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    fe = _get_fe_url(settings)
+    group = await db.groups.find_one({"id": data.group_id}, {"_id": 0})
+    if not group:
+        raise HTTPException(404, "Group not found")
+    
+    # Determine recipients
+    recipients = []
+    
+    if data.payment_status_filter:
+        # Filter by payment status for the current active cycle
+        active_rec = await db.member_cycle_status.find(
+            {"group_id": data.group_id, "status": data.payment_status_filter},
+            {"_id": 0, "user_id": 1}
+        ).to_list(1000)
+        recipients = [r["user_id"] for r in active_rec]
+    
+    # Add explicitly specified user_ids
+    for uid in data.user_ids:
+        if uid not in recipients:
+            recipients.append(uid)
+    
+    if not recipients:
+        return {"ok": True, "sent": 0, "message": "No recipients matched the criteria"}
+    
+    # Send to each recipient
+    sent_count = 0
+    for user_id in recipients:
+        u = await db.users.find_one({"id": user_id}, {"_id": 0})
+        if u and u.get("email"):
+            await send_email(
+                db, u["email"],
+                data.title, data.title, data.body,
+                cta_label=f"View {group['name']}",
+                cta_link=f"{fe}/groups/{data.group_id}"
+            )
+            await push_notification(user_id, data.title, data.body, link=f"/groups/{data.group_id}")
+            sent_count += 1
+    
+    await log_audit(admin["id"], "targeted_message_sent",
+                    meta={"group_id": data.group_id, "recipients": sent_count, "filter": data.payment_status_filter})
+    
+    return {"ok": True, "sent": sent_count}
 
 # ---------------- MIDDLEWARE & LOGGING ----------------
 _raw_origins = os.environ.get("FRONTEND_URL", "http://localhost:3000")
