@@ -19,7 +19,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 from email_service import send_email, send_email_with_error, _wrap as _email_wrap
 from twilio_service import send_whatsapp
-from openai import AsyncOpenAI
 
 # ---------------- DB & APP ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -31,17 +30,6 @@ api = APIRouter(prefix="/api")
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALG = "HS256"
-
-# ---------------- AI CLIENT ----------------
-_openai_client = None
-def get_openai_client():
-    global _openai_client
-    if _openai_client is None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return None
-        _openai_client = AsyncOpenAI(api_key=api_key)
-    return _openai_client
 
 # ---------------- HELPERS ----------------
 def now_utc():
@@ -2150,9 +2138,11 @@ class TargetedMessageIn(BaseModel):
 @api.post("/admin/ai/generate-message")
 async def generate_ai_message(data: AIMessageIn, admin=Depends(require_admin)):
     """Generate a message using AI based on admin's prompt. Returns preview only — doesn't send."""
-    client = get_openai_client()
-    if not client:
-        raise HTTPException(400, "OpenAI API key not configured. Set OPENAI_API_KEY environment variable.")
+    s = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    api_key = s.get("groq_api_key")
+    if not api_key:
+        raise HTTPException(400, "Groq API key not configured. Go to Admin Settings → AI Assistant to add it.")
+    model = s.get("groq_model") or "llama-3.3-70b-versatile"
     
     # Build context about the group if provided
     group_context = ""
@@ -2168,17 +2158,9 @@ Format your response as JSON with keys: "title" (short subject line) and "body" 
     user_prompt = f"Prompt: {data.prompt}\n{data.context or ''}{group_context}"
     
     try:
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            response_format={"type": "json_object"}
-        )
-        content = response.choices[0].message.content
+        raw = await call_groq(api_key, system_prompt, user_prompt, model)
         import json
-        parsed = json.loads(content)
+        parsed = json.loads(raw)
         return {"title": parsed.get("title", ""), "body": parsed.get("body", "")}
     except Exception as e:
         raise HTTPException(500, f"AI generation failed: {str(e)}")
