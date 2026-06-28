@@ -1137,6 +1137,7 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
     if not is_admin and not is_member:
         raise HTTPException(403, "Not a member of this group")
     await _sync_cycle_payouts(group_id)  # keep payout_user_id consistent before serving
+    await _refresh_cycle_statuses(group_id)  # advance Not_Due -> Due as time passes
     cycles = await db.cycles.find({"group_id": group_id}, {"_id": 0}).sort("cycle_no", 1).to_list(1000)
     members_raw = await db.group_members.find({"group_id": group_id}, {"_id": 0}).to_list(1000)
     members = [m for m in members_raw if m.get("payout_position") is not None]
@@ -1161,46 +1162,59 @@ async def group_detail(group_id: str, user=Depends(get_current_user)):
     else:
         my_status = await db.member_cycle_status.find({"group_id": group_id, "user_id": user["id"]}, {"_id": 0}).to_list(1000)
 
-    # ── Per-member payment status (privacy-safe — status only, no amounts) ──
-    # For each member, show their most recent payment status across all cycles.
-    # This handles the case where some members have paid early (Cycle 1 = Paid) while
-    # the group is now on Cycle 2 (Due). The early payer should show "Paid", not "Upcoming".
-    member_payment_statuses: dict = {}
-    all_statuses = await db.member_cycle_status.find(
-        {"group_id": group_id},
-        {"_id": 0, "user_id": 1, "cycle_no": 1, "status": 1}
-    ).to_list(5000)
-    # Group by user_id, find the most recent cycle with a non-Not_Due status
-    for user_id in {s["user_id"] for s in all_statuses}:
-        user_cycles = [s for s in all_statuses if s["user_id"] == user_id]
-        # Sort by cycle_no descending, find first with status != Not_Due
-        user_cycles.sort(key=lambda x: x["cycle_no"], reverse=True)
-        for s in user_cycles:
-            if s["status"] != "Not_Due":
-                member_payment_statuses[user_id] = s["status"]
-                break
-        # If all cycles are Not_Due, show the earliest one as Upcoming
-        if user_id not in member_payment_statuses and user_cycles:
-            member_payment_statuses[user_id] = "Not_Due"
-    # For context, also find the group's current active cycle (for admin view)
-    active_rec = await db.member_cycle_status.find(
-        {"group_id": group_id, "status": {"$in": ["Due", "Overdue", "Paid", "Submitted"]}},
+    # ── Active cycle: first cycle whose payout is not yet completed ──
+    first_pending = await db.cycles.find(
+        {"group_id": group_id, "payout_status": {"$ne": "completed"}},
         {"_id": 0, "cycle_no": 1}
     ).sort("cycle_no", 1).limit(1).to_list(1)
-    if active_rec:
-        active_cycle_no = active_rec[0]["cycle_no"]
+    active_cycle_no = first_pending[0]["cycle_no"] if first_pending else None
+
+    # ── Per-member payment status for the active cycle only ──
+    member_payment_statuses: dict = {}
+    if active_cycle_no:
+        active_statuses = await db.member_cycle_status.find(
+            {"group_id": group_id, "cycle_no": active_cycle_no},
+            {"_id": 0, "user_id": 1, "status": 1}
+        ).to_list(5000)
+        for s in active_statuses:
+            member_payment_statuses[s["user_id"]] = s["status"]
     else:
-        first_pending = await db.cycles.find(
-            {"group_id": group_id, "payout_status": {"$ne": "completed"}},
-            {"_id": 0, "cycle_no": 1}
-        ).sort("cycle_no", 1).limit(1).to_list(1)
-        active_cycle_no = first_pending[0]["cycle_no"] if first_pending else None
+        # All cycles completed — show most recent status per member
+        all_statuses = await db.member_cycle_status.find(
+            {"group_id": group_id},
+            {"_id": 0, "user_id": 1, "cycle_no": 1, "status": 1}
+        ).to_list(5000)
+        for uid in {s["user_id"] for s in all_statuses}:
+            user_cycles = sorted([s for s in all_statuses if s["user_id"] == uid],
+                                 key=lambda x: x["cycle_no"], reverse=True)
+            member_payment_statuses[uid] = user_cycles[0]["status"] if user_cycles else "Not_Due"
 
     return {
         "group": g, "cycles": cycles, "members": members, "statuses": my_status,
         "member_payment_statuses": member_payment_statuses,
         "active_cycle_no": active_cycle_no,
     }
+
+# ── Helper: auto-advance Not_Due -> Due when a cycle's due_date passes ──
+async def _refresh_cycle_statuses(group_id: str):
+    """Transition member_cycle_status from Not_Due -> Due when the cycle due_date has arrived.
+    Called before group_detail so members always see the correct current status."""
+    from datetime import date as _date
+    today_d = now_utc().date()
+    pending_cycles = await db.cycles.find(
+        {"group_id": group_id, "payout_status": {"$ne": "completed"}},
+        {"_id": 0, "cycle_no": 1, "due_date": 1}
+    ).sort("cycle_no", 1).to_list(1000)
+    for c in pending_cycles:
+        try:
+            due_d = _date.fromisoformat(c["due_date"])
+        except Exception:
+            continue
+        if due_d <= today_d:
+            await db.member_cycle_status.update_many(
+                {"group_id": group_id, "cycle_no": c["cycle_no"], "status": "Not_Due"},
+                {"$set": {"status": "Due", "updated_at": now_utc().isoformat()}}
+            )
 
 # ── Helper: keep cycles.payout_user_id in sync with group_members.payout_position ──
 async def _sync_cycle_payouts(gid: str):
