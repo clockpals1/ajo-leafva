@@ -57,8 +57,10 @@ export default function GroupDetail() {
   // What I receive per payout = contribution × total slots in group
   const myPayoutAmount = group.contribution_amount * members.length;
   // Next actionable cycle
+  const today = new Date();
   const nextDue = cycles
     .filter(c => { const s = statusByCycle[c.cycle_no]; return s && (s.status === "Due" || s.status === "Not_Due" || s.status === "Overdue"); })
+    .filter(c => new Date(c.due_date) >= today)
     .sort((a,b) => new Date(a.due_date) - new Date(b.due_date))[0] || null;
   const nextDueAmount = nextDue
     ? (statusByCycle[nextDue.cycle_no]?.expected_amount ?? myMonthlyDue)
