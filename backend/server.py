@@ -2210,6 +2210,119 @@ async def admin_broadcast(data: BroadcastIn, admin=Depends(require_admin)):
                     meta={"scope": "all", "groups": len(groups), "members": len(sent)})
     return {"ok": True, "scope": "all", "groups": len(groups)}
 
+# ---------------- PAYMENT REMINDER ----------------
+class PaymentReminderIn(BaseModel):
+    custom_message: Optional[str] = None  # optional extra note from admin
+
+@api.post("/admin/groups/{group_id}/payment-reminder")
+async def send_payment_reminder(group_id: str, data: PaymentReminderIn, admin=Depends(require_admin)):
+    """Send a payment reminder email + in-app notification to every member who hasn't paid
+    for the current active cycle. Members who have already submitted/paid are automatically skipped."""
+    g = await db.groups.find_one({"id": group_id}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "Group not found")
+    settings_doc = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    fe = _get_fe_url(settings_doc)
+    brand = settings_doc.get("brand_name") or "Ajo Platform"
+
+    # Find the active cycle
+    first_pending = await db.cycles.find(
+        {"group_id": group_id, "payout_status": {"$ne": "completed"}},
+        {"_id": 0, "cycle_no": 1, "due_date": 1}
+    ).sort("cycle_no", 1).limit(1).to_list(1)
+    if not first_pending:
+        raise HTTPException(400, "No active cycle found for this group — all cycles are completed.")
+    active_cycle = first_pending[0]
+    cycle_no = active_cycle["cycle_no"]
+    due_date_str = active_cycle.get("due_date", "")
+
+    # Statuses that mean the member has already paid / is in review
+    PAID_STATUSES = {"Submitted", "Paid", "Payout_Completed", "Approved"}
+
+    # Get all member_cycle_status rows for the active cycle
+    cycle_statuses = await db.member_cycle_status.find(
+        {"group_id": group_id, "cycle_no": cycle_no},
+        {"_id": 0, "user_id": 1, "status": 1, "expected_amount": 1}
+    ).to_list(1000)
+    status_by_user = {s["user_id"]: s for s in cycle_statuses}
+
+    members = await db.group_members.find(
+        {"group_id": group_id, "status": {"$ne": "removed"}},
+        {"_id": 0, "user_id": 1}
+    ).to_list(1000)
+
+    sent_count = 0
+    skipped_count = 0
+    for m in members:
+        uid = m["user_id"]
+        st = status_by_user.get(uid, {})
+        member_status = st.get("status", "Due")
+        expected_amount = st.get("expected_amount") or g.get("contribution_amount", 0)
+
+        if member_status in PAID_STATUSES:
+            skipped_count += 1
+            continue
+
+        u = await db.users.find_one({"id": uid}, {"_id": 0})
+        if not u:
+            continue
+        name = u.get("name", "Member")
+        email_addr = u.get("email", "")
+
+        status_note = ""
+        if member_status == "Overdue":
+            status_note = "<p style='color:#b91c1c;font-weight:600'>⚠️ Your payment is overdue. Please pay as soon as possible to avoid penalties.</p>"
+        elif member_status == "Due":
+            status_note = "<p style='color:#b45309;font-weight:600'>Your payment is now due for this month.</p>"
+        else:
+            due_display = fmtdate_simple(due_date_str)
+            status_note = f"<p>Your contribution for this month is coming up (due {due_display}).</p>"
+
+        custom_note = f"<p><em>{data.custom_message}</em></p>" if data.custom_message else ""
+
+        body_html = (
+            f"<p>Hi <b>{name}</b>,</p>"
+            f"{status_note}"
+            f"<p><b>Group:</b> {g['name']}<br>"
+            f"<b>Month:</b> Cycle {cycle_no}"
+            + (f"<br><b>Due date:</b> {fmtdate_simple(due_date_str)}" if due_date_str else "")
+            + f"<br><b>Amount:</b> ₦{expected_amount:,.0f}</p>"
+            + custom_note
+            + "<p>Please log in and upload your payment proof to confirm your contribution.</p>"
+        )
+        subject = f"💳 Payment reminder — {g['name']} (Month {cycle_no})"
+
+        if email_addr:
+            await send_email(db, email_addr, subject, "Payment Reminder", body_html,
+                             cta_label="Pay now", cta_link=f"{fe}/groups/{group_id}")
+        await push_notification(uid, f"Payment reminder — {g['name']}",
+                                f"Month {cycle_no} payment of ₦{expected_amount:,.0f} is {member_status.lower()}.",
+                                link=f"/groups/{group_id}")
+        sent_count += 1
+
+    await log_audit(admin["id"], "payment_reminder_sent",
+                    meta={"group_id": group_id, "cycle_no": cycle_no,
+                          "sent": sent_count, "skipped_already_paid": skipped_count})
+    return {
+        "ok": True,
+        "cycle_no": cycle_no,
+        "sent": sent_count,
+        "skipped_already_paid": skipped_count,
+        "message": f"Reminder sent to {sent_count} member{'s' if sent_count != 1 else ''}. "
+                   f"{skipped_count} already paid member{'s' if skipped_count != 1 else ''} skipped."
+    }
+
+
+def fmtdate_simple(iso: str) -> str:
+    """Format YYYY-MM-DD to '5 Jul 2026'."""
+    try:
+        from datetime import date as _date
+        d = _date.fromisoformat(iso)
+        return d.strftime("%-d %b %Y") if hasattr(d, "strftime") else iso
+    except Exception:
+        return iso
+
+
 # ---------------- AI-POWERED MESSAGING ----------------
 class AIMessageIn(BaseModel):
     prompt: str

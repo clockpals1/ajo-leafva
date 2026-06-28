@@ -24,23 +24,65 @@ function BroadcastBox({ groupId }) {
       setMsg(formatErr(err?.response?.data?.detail) || "Failed");
     } finally { setBusy(false); }
   };
+
+  const [reminderNote, setReminderNote] = useState("");
+  const [reminderMsg, setReminderMsg] = useState("");
+  const [reminderBusy, setReminderBusy] = useState(false);
+  const sendReminder = async (e) => {
+    e.preventDefault();
+    setReminderBusy(true); setReminderMsg("");
+    try {
+      const r = await api.post(`/admin/groups/${groupId}/payment-reminder`, { custom_message: reminderNote || null });
+      setReminderMsg(r.data.message);
+      setReminderNote("");
+    } catch (err) {
+      setReminderMsg(formatErr(err?.response?.data?.detail) || "Failed to send reminder.");
+    } finally { setReminderBusy(false); }
+  };
+
   return (
-    <form onSubmit={send} className="card-tactile p-6" data-testid="broadcast-form">
-      <h3 className="font-display text-xl mb-3">Broadcast notification</h3>
-      <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Sends an in-app notification to every active member of this group.</p>
-      <div className="grid md:grid-cols-3 gap-3">
-        <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Title"
-          className="border rounded px-3 py-2 bg-white md:col-span-1" data-testid="broadcast-title" />
-        <input value={body} onChange={e=>setBody(e.target.value)} placeholder="Message body"
-          className="border rounded px-3 py-2 bg-white md:col-span-2" data-testid="broadcast-body" />
+    <div className="space-y-4">
+      {/* Payment Reminder */}
+      <div className="card-tactile p-6" data-testid="reminder-form">
+        <h3 className="font-display text-xl mb-1">💳 Payment reminder</h3>
+        <p className="text-xs mb-4" style={{color:"var(--muted)"}}>
+          Sends a personalised payment reminder to every member who <strong>hasn't paid yet</strong> for the current active cycle.
+          Members who have already submitted or been approved are automatically skipped.
+        </p>
+        <form onSubmit={sendReminder}>
+          <input
+            value={reminderNote}
+            onChange={e=>setReminderNote(e.target.value)}
+            placeholder="Optional extra note to include in the email (e.g. 'Deadline is Friday!')"
+            className="w-full border rounded px-3 py-2 bg-white text-sm mb-3"
+          />
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium" style={{color: reminderMsg.startsWith("Reminder sent") ? "var(--primary)" : "#b91c1c"}}>{reminderMsg}</div>
+            <button disabled={reminderBusy} className="btn-primary text-sm" data-testid="reminder-send">
+              {reminderBusy ? "Sending…" : "Send reminder to unpaid members"}
+            </button>
+          </div>
+        </form>
       </div>
-      <div className="flex items-center justify-between mt-3">
-        <div className="text-sm" style={{color:"var(--primary)"}} data-testid="broadcast-msg">{msg}</div>
-        <button disabled={busy} className="btn-primary text-sm" data-testid="broadcast-send">
-          {busy ? "Sending…" : "Send to group"}
-        </button>
-      </div>
-    </form>
+
+      {/* General Broadcast */}
+      <form onSubmit={send} className="card-tactile p-6" data-testid="broadcast-form">
+        <h3 className="font-display text-xl mb-3">📢 Broadcast notification</h3>
+        <p className="text-xs mb-4" style={{color:"var(--muted)"}}>Sends a custom in-app notification + email to <strong>every</strong> active member of this group.</p>
+        <div className="grid md:grid-cols-3 gap-3">
+          <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Title"
+            className="border rounded px-3 py-2 bg-white md:col-span-1" data-testid="broadcast-title" />
+          <input value={body} onChange={e=>setBody(e.target.value)} placeholder="Message body"
+            className="border rounded px-3 py-2 bg-white md:col-span-2" data-testid="broadcast-body" />
+        </div>
+        <div className="flex items-center justify-between mt-3">
+          <div className="text-sm" style={{color:"var(--primary)"}} data-testid="broadcast-msg">{msg}</div>
+          <button disabled={busy} className="btn-primary text-sm" data-testid="broadcast-send">
+            {busy ? "Sending…" : "Send to all members"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
