@@ -964,25 +964,32 @@ async def upload_payment(data: PaymentUpload, user=Depends(get_current_user)):
     # notify admin — in-app + email
     group_doc = await db.groups.find_one({"id": data.group_id}, {"_id": 0, "name": 1})
     group_name = group_doc["name"] if group_doc else data.group_id
+    settings_doc = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    extra_emails_raw = settings_doc.get("payment_approval_emails") or ""
+    extra_emails = [e.strip() for e in extra_emails_raw.split(",") if e.strip()]
     admins = await db.users.find({"role": {"$in": ["admin", "super_admin"]}}).to_list(100)
+    email_subject = f"💰 New payment submitted — {group_name}"
+    email_title = "New Payment Submitted"
+    email_body = (
+        f"<p><b>{user['name']}</b> has submitted a payment proof for <b>{group_name}</b>.</p>"
+        f"<p><b>Amount:</b> ₦{data.amount:,.0f}<br>"
+        f"<b>Month:</b> Cycle {data.cycle_no}<br>"
+        f"<b>Submitted at:</b> {now_utc().strftime('%d %b %Y, %H:%M UTC')}</p>"
+        f"<p>Please log in to the admin panel to review and approve or reject this payment.</p>"
+    )
     for a in admins:
         await push_notification(a["id"], "New payment submitted",
                                 f"{user['name']} submitted ₦{data.amount:,.0f} for cycle {data.cycle_no} in {group_name}.",
                                 link=f"/admin")
         if a.get("email"):
-            await send_email(
-                db,
-                a["email"],
-                f"💰 New payment submitted — {group_name}",
-                "New Payment Submitted",
-                f"<p><b>{user['name']}</b> has submitted a payment proof for <b>{group_name}</b>.</p>"
-                f"<p><b>Amount:</b> ₦{data.amount:,.0f}<br>"
-                f"<b>Month:</b> Cycle {data.cycle_no}<br>"
-                f"<b>Submitted at:</b> {now_utc().strftime('%d %b %Y, %H:%M UTC')}</p>"
-                f"<p>Please log in to the admin panel to review and approve or reject this payment.</p>",
-                cta_label="Review payment",
-                cta_link=f"{_primary_fe_url()}/admin",
-            )
+            await send_email(db, a["email"], email_subject, email_title, email_body,
+                             cta_label="Review payment", cta_link=f"{_primary_fe_url()}/admin")
+    # also notify extra approval emails from Settings
+    admin_emails = {a["email"] for a in admins if a.get("email")}
+    for email_addr in extra_emails:
+        if email_addr not in admin_emails:  # avoid duplicates
+            await send_email(db, email_addr, email_subject, email_title, email_body,
+                             cta_label="Review payment", cta_link=f"{_primary_fe_url()}/admin")
     doc.pop("_id", None)
     return doc
 
@@ -1599,6 +1606,7 @@ class SettingsIn(BaseModel):
     smtp_secure: Optional[bool] = None
     groq_api_key: Optional[str] = None
     groq_model: Optional[str] = None
+    payment_approval_emails: Optional[str] = None  # comma-separated extra emails for payment notifications
 
 def _mask(v: str) -> str:
     if not v: return ""
@@ -1629,6 +1637,7 @@ async def get_settings(admin=Depends(require_admin)):
         "groq_api_key_masked": _mask(s.get("groq_api_key", "")),
         "has_groq": bool(s.get("groq_api_key")),
         "groq_model": s.get("groq_model") or "llama-3.3-70b-versatile",
+        "payment_approval_emails": s.get("payment_approval_emails") or "",
     }
 
 @api.put("/admin/settings")

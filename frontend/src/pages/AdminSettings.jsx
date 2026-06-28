@@ -23,6 +23,7 @@ export default function AdminSettings() {
       smtp_user: data.smtp_user, smtp_password: "",
       smtp_from: data.smtp_from, smtp_secure: data.smtp_secure || false,
       groq_api_key: "", groq_model: data.groq_model || "llama-3.3-70b-versatile",
+      payment_approval_emails: data.payment_approval_emails || "",
     });
   };
   useEffect(() => { load(); }, []);
@@ -200,6 +201,20 @@ export default function AdminSettings() {
             <Field label="Brand name" value={form.brand_name||""} onChange={v=>setForm({...form, brand_name:v})} testid="setting-brand" />
             <Field label="Support email" value={form.support_email||""} onChange={v=>setForm({...form, support_email:v})} testid="setting-support" type="email" />
             <Field label="Frontend URL (used in email / invite links)" value={form.frontend_url||""} onChange={v=>setForm({...form, frontend_url:v})} testid="setting-fe" />
+          </Section>
+
+          <Section title="Payment Approval Notifications">
+            <p className="text-xs mb-2" style={{color:"var(--muted)"}}>Extra email addresses to notify when a member submits a payment proof (Pending Approvals). Separate multiple addresses with commas. System admin accounts are always notified automatically.</p>
+            <div>
+              <label className="block text-xs mb-1" style={{color:"var(--muted)"}}>Additional approval notification emails</label>
+              <textarea
+                rows={2}
+                value={form.payment_approval_emails||""}
+                onChange={e=>setForm({...form, payment_approval_emails:e.target.value})}
+                placeholder="approver1@example.com, approver2@example.com"
+                className="w-full border rounded px-3 py-2 text-sm"
+              />
+            </div>
           </Section>
 
           <Section title="Email — Resend">
