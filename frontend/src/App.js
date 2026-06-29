@@ -14,6 +14,8 @@ import JoinPage from "./pages/JoinPage";
 import Notifications from "./pages/Notifications";
 import Profile from "./pages/Profile";
 import SetPassword from "./pages/SetPassword";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import { Toaster } from "sonner";
 
 function Protected({ children, adminOnly = false }) {
@@ -50,6 +52,8 @@ function App() {
           <Route path="/notifications" element={<Protected><Notifications /></Protected>} />
           <Route path="/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/set-password" element={<SetPassword />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </BrowserRouter>

@@ -184,6 +184,20 @@ class SetPasswordFromTokenIn(BaseModel):
     token: str
     password: str
 
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    password: str
+
+class RequestLoginCodeIn(BaseModel):
+    email: EmailStr
+
+class VerifyLoginCodeIn(BaseModel):
+    email: EmailStr
+    code: str
+
 class UserRoleUpdate(BaseModel):
     role: Literal["member", "admin", "super_admin"]
 
@@ -275,6 +289,99 @@ async def login(data: LoginIn, response: Response):
 async def logout(response: Response):
     response.delete_cookie("access_token", path="/")
     return {"ok": True}
+
+@api.post("/auth/forgot-password")
+async def forgot_password(data: ForgotPasswordIn):
+    """Send a password-reset link to the user's email. Always returns 200 to prevent email enumeration."""
+    u = await db.users.find_one({"email": data.email.lower()}, {"_id": 0})
+    if u:
+        reset_token = str(uuid.uuid4())
+        await db.password_reset_tokens.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": u["id"],
+            "token": reset_token,
+            "expires_at": (now_utc() + timedelta(minutes=60)).isoformat(),
+            "used": False,
+            "created_at": now_utc().isoformat(),
+        })
+        reset_link = f"{_primary_fe_url()}/reset-password?token={reset_token}"
+        await send_email(
+            db, u["email"],
+            "Reset your Ajo password",
+            "Password Reset",
+            f"<p>Hi <b>{u['name']}</b>,</p>"
+            "<p>We received a request to reset your password. Click the button below to set a new one.</p>"
+            "<p>This link expires in <b>60 minutes</b>. If you didn't request this, you can safely ignore this email.</p>",
+            cta_label="Reset my password",
+            cta_link=reset_link,
+        )
+    return {"ok": True, "message": "If that email is registered, a reset link has been sent."}
+
+@api.post("/auth/reset-password")
+async def reset_password(data: ResetPasswordIn, response: Response):
+    """Complete a password reset using the emailed token."""
+    if len(data.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    tok = await db.password_reset_tokens.find_one({"token": data.token})
+    if not tok or tok.get("used"):
+        raise HTTPException(400, "This reset link is invalid or has already been used.")
+    if now_utc().isoformat() > tok["expires_at"]:
+        raise HTTPException(400, "This reset link has expired. Please request a new one.")
+    u = await db.users.find_one({"id": tok["user_id"]}, {"_id": 0})
+    if not u:
+        raise HTTPException(404, "Account not found.")
+    await db.users.update_one({"id": u["id"]}, {"$set": {"password_hash": hash_pw(data.password)}})
+    await db.password_reset_tokens.update_one({"id": tok["id"]}, {"$set": {"used": True}})
+    jwt_token = make_token(u["id"], u["email"], u["role"])
+    set_auth_cookie(response, jwt_token)
+    fresh = await db.users.find_one({"id": u["id"]}, {"_id": 0, "password_hash": 0})
+    await log_audit(u["id"], "password_reset")
+    return {"user": fresh, "token": jwt_token}
+
+@api.post("/auth/request-login-code")
+async def request_login_code(data: RequestLoginCodeIn):
+    """Send a 6-digit one-time login code to the member's email. Valid 15 minutes."""
+    import random
+    u = await db.users.find_one({"email": data.email.lower()}, {"_id": 0})
+    if u:
+        code = str(random.randint(100000, 999999))
+        await db.login_codes.delete_many({"user_id": u["id"]})  # clear old codes
+        await db.login_codes.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": u["id"],
+            "code": code,
+            "expires_at": (now_utc() + timedelta(minutes=15)).isoformat(),
+            "used": False,
+            "created_at": now_utc().isoformat(),
+        })
+        await send_email(
+            db, u["email"],
+            "Your Ajo login code",
+            "One-Time Login Code",
+            f"<p>Hi <b>{u['name']}</b>,</p>"
+            f"<p>Your one-time login code is:</p>"
+            f"<p style='font-size:36px;font-weight:900;letter-spacing:0.15em;color:#1E3F33;text-align:center'>{code}</p>"
+            f"<p style='text-align:center;color:#7B7A77;font-size:12px'>Expires in 15 minutes. Do not share this code with anyone.</p>",
+        )
+    return {"ok": True, "message": "If that email is registered, a login code has been sent."}
+
+@api.post("/auth/verify-login-code")
+async def verify_login_code(data: VerifyLoginCodeIn, response: Response):
+    """Verify the 6-digit login code and return a JWT session."""
+    u = await db.users.find_one({"email": data.email.lower()}, {"_id": 0})
+    if not u:
+        raise HTTPException(400, "Invalid code or email.")
+    rec = await db.login_codes.find_one({"user_id": u["id"], "code": data.code.strip(), "used": False})
+    if not rec:
+        raise HTTPException(400, "Incorrect code. Please check your email and try again.")
+    if now_utc().isoformat() > rec["expires_at"]:
+        raise HTTPException(400, "This code has expired. Request a new one.")
+    await db.login_codes.update_one({"id": rec["id"]}, {"$set": {"used": True}})
+    jwt_token = make_token(u["id"], u["email"], u["role"])
+    set_auth_cookie(response, jwt_token)
+    fresh = await db.users.find_one({"id": u["id"]}, {"_id": 0, "password_hash": 0})
+    await log_audit(u["id"], "login_with_code")
+    return {"user": fresh, "token": jwt_token}
 
 @api.get("/auth/me")
 async def me(user=Depends(get_current_user)):
