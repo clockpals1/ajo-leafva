@@ -227,7 +227,7 @@ export default function AdminDashboard() {
     finally { setEmailReportBusy(false); }
   };
 
-  useEffect(() => { if (tab === "accounting") loadAccounting(); }, [tab, accountingFilters]);
+  useEffect(() => { if (tab === "accounting") loadAccounting(); }, [tab, accountingFilters, loadAccounting]);
 
   const openEditUser = (u) => {
     setEditUserTarget(u);
