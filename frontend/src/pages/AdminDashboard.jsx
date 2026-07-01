@@ -5,7 +5,7 @@ import TopNav from "../components/TopNav";
 import {
   Plus, Users, UserCheck, Clock, AlertTriangle, TrendingUp,
   Banknote, CalendarDays, RefreshCw, Megaphone, CheckCircle2, Search, UserPlus, X, Trash2, Pencil, KeyRound,
-  Sparkles, Loader2, Wand2,
+  Sparkles, Loader2, Wand2, Mail,
 } from "lucide-react";
 
 const ACTION_COLORS = {
@@ -82,6 +82,16 @@ export default function AdminDashboard() {
   const [resetPwBusy, setResetPwBusy] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
   const [actionBusyId, setActionBusyId] = useState(null);
+
+  // ── Accounting state ──
+  const [accountingData, setAccountingData] = useState(null);
+  const [accountingLoading, setAccountingLoading] = useState(false);
+  const [accountingFilters, setAccountingFilters] = useState({ cycle_no: null, group_id: null, status_filter: null, reconciled_filter: null });
+  const [selectedPayments, setSelectedPayments] = useState(new Set());
+  const [insights, setInsights] = useState("");
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [emailReportMsg, setEmailReportMsg] = useState("");
+  const [emailReportBusy, setEmailReportBusy] = useState(false);
 
   const load = async () => {
     const [s, g, p, u, a] = await Promise.all([
@@ -179,6 +189,45 @@ export default function AdminDashboard() {
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
     finally { setActionBusyId(null); }
   };
+
+  // ── Accounting functions ──
+  const loadAccounting = async () => {
+    setAccountingLoading(true);
+    try {
+      const { data } = await api.post("/admin/accounting/reconciliation", accountingFilters);
+      setAccountingData(data);
+      setSelectedPayments(new Set());
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+    finally { setAccountingLoading(false); }
+  };
+
+  const markReconciled = async (reconciled) => {
+    if (selectedPayments.size === 0) return;
+    try {
+      await api.post("/admin/accounting/mark-reconciled", { payment_ids: Array.from(selectedPayments), reconciled });
+      loadAccounting();
+    } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
+  };
+
+  const loadInsights = async () => {
+    setInsightsLoading(true);
+    try {
+      const { data } = await api.post("/admin/accounting/insights");
+      setInsights(data.insights);
+    } catch (e) { setInsights("Failed to load insights. Make sure Groq API key is configured."); }
+    finally { setInsightsLoading(false); }
+  };
+
+  const sendEmailReport = async () => {
+    setEmailReportBusy(true); setEmailReportMsg("");
+    try {
+      const { data } = await api.post("/admin/accounting/email-report", accountingFilters);
+      setEmailReportMsg(`Report sent to ${data.emailed_to} with ${data.payments_included} payments.`);
+    } catch (e) { setEmailReportMsg(formatErr(e?.response?.data?.detail)); }
+    finally { setEmailReportBusy(false); }
+  };
+
+  useEffect(() => { if (tab === "accounting") loadAccounting(); }, [tab, accountingFilters]);
 
   const openEditUser = (u) => {
     setEditUserTarget(u);
@@ -301,6 +350,7 @@ export default function AdminDashboard() {
     ["groups",    "Groups"],
     ["approvals", `Approvals${pending.length ? ` (${pending.length})` : ""}`],
     ["members",   "Members"],
+    ["accounting","Accounting"],
     ["audit",     "Audit Log"],
   ];
 
@@ -772,6 +822,162 @@ export default function AdminDashboard() {
                 )}
               </tbody>
             </table>
+          </div>
+        )}
+
+        {/* ── ACCOUNTING ── */}
+        {tab === "accounting" && (
+          <div className="space-y-6">
+            {/* Filters */}
+            <div className="card-tactile p-4 flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Cycle</label>
+                <input type="number" placeholder="All" value={accountingFilters.cycle_no || ""}
+                  onChange={e=>setAccountingFilters({...accountingFilters, cycle_no: e.target.value ? Number(e.target.value) : null})}
+                  className="border rounded px-3 py-2 text-sm w-24" />
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Group</label>
+                <select value={accountingFilters.group_id || ""}
+                  onChange={e=>setAccountingFilters({...accountingFilters, group_id: e.target.value || null})}
+                  className="border rounded px-3 py-2 text-sm w-48">
+                  <option value="">All groups</option>
+                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Status</label>
+                <select value={accountingFilters.status_filter || ""}
+                  onChange={e=>setAccountingFilters({...accountingFilters, status_filter: e.target.value || null})}
+                  className="border rounded px-3 py-2 text-sm w-32">
+                  <option value="">All</option>
+                  <option value="approved">Approved</option>
+                  <option value="submitted">Submitted</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs mb-1 font-semibold" style={{color:"var(--muted)"}}>Reconciled</label>
+                <select value={accountingFilters.reconciled_filter || ""}
+                  onChange={e=>setAccountingFilters({...accountingFilters, reconciled_filter: e.target.value || null})}
+                  className="border rounded px-3 py-2 text-sm w-32">
+                  <option value="">All</option>
+                  <option value="reconciled">Reconciled</option>
+                  <option value="unreconciled">Unreconciled</option>
+                </select>
+              </div>
+              <button onClick={loadAccounting} className="btn-primary text-sm">Apply filters</button>
+            </div>
+
+            {/* Summary cards */}
+            {accountingData?.summary && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="card-tactile p-4">
+                  <div className="text-xs" style={{color:"var(--muted)"}}>Total payments</div>
+                  <div className="font-display text-xl mt-1">{accountingData.summary.total_payments}</div>
+                </div>
+                <div className="card-tactile p-4">
+                  <div className="text-xs" style={{color:"var(--muted)"}}>Total amount</div>
+                  <div className="font-display text-xl mt-1">{fmtMoney(accountingData.summary.total_amount)}</div>
+                </div>
+                <div className="card-tactile p-4">
+                  <div className="text-xs" style={{color:"var(--muted)"}}>Reconciled</div>
+                  <div className="font-display text-xl mt-1" style={{color:"#16a34a"}}>{accountingData.summary.reconciled}</div>
+                </div>
+                <div className="card-tactile p-4">
+                  <div className="text-xs" style={{color:"var(--muted)"}}>Unreconciled</div>
+                  <div className="font-display text-xl mt-1" style={{color:"#b91c1c"}}>{accountingData.summary.unreconciled}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Action bar */}
+            <div className="flex flex-wrap gap-3 items-center">
+              <button onClick={()=>markReconciled(true)} disabled={selectedPayments.size === 0}
+                className="btn-primary text-sm disabled:opacity-50">
+                ✓ Mark reconciled ({selectedPayments.size})
+              </button>
+              <button onClick={()=>markReconciled(false)} disabled={selectedPayments.size === 0}
+                className="btn-secondary text-sm disabled:opacity-50">
+                ✗ Mark unreconciled
+              </button>
+              <button onClick={loadInsights} className="btn-secondary text-sm flex items-center gap-1">
+                <Sparkles size={14}/> {insightsLoading ? "Loading..." : "AI Insights"}
+              </button>
+              <button onClick={sendEmailReport} disabled={emailReportBusy}
+                className="btn-secondary text-sm flex items-center gap-1">
+                <Mail size={14}/> {emailReportBusy ? "Sending..." : "Email Report"}
+              </button>
+              {emailReportMsg && <span className="text-sm" style={{color:"var(--primary)"}}>{emailReportMsg}</span>}
+            </div>
+
+            {/* AI Insights */}
+            {insights && (
+              <div className="card-tactile p-4" style={{background:"#f0fdf4",border:"1px solid #bbf7d0"}}>
+                <div className="flex items-center gap-2 mb-2 font-semibold" style={{color:"#166534"}}>
+                  <Sparkles size={16}/> AI Financial Insights
+                </div>
+                <div className="text-sm whitespace-pre-wrap" style={{color:"#166534"}}>{insights}</div>
+              </div>
+            )}
+
+            {/* Reconciliation table */}
+            <div className="card-tactile overflow-hidden">
+              {accountingLoading ? (
+                <div className="p-10 text-center text-sm" style={{color:"var(--muted)"}}>Loading...</div>
+              ) : accountingData?.payments?.length === 0 ? (
+                <div className="p-10 text-center text-sm" style={{color:"var(--muted)"}}>No payments found with current filters.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-white/50">
+                      <tr className="text-left">
+                        <th className="px-4 py-3">
+                          <input type="checkbox" checked={selectedPayments.size > 0 && accountingData.payments.every(p=>selectedPayments.has(p.id))}
+                            onChange={e=>{if(e.target.checked){setSelectedPayments(new Set(accountingData.payments.map(p=>p.id)))}else{setSelectedPayments(new Set())}}}
+                        </th>
+                        <th className="px-4 py-3 label-eyebrow">Group</th>
+                        <th className="px-4 py-3 label-eyebrow">Member</th>
+                        <th className="px-4 py-3 label-eyebrow">Cycle</th>
+                        <th className="px-4 py-3 label-eyebrow">Amount</th>
+                        <th className="px-4 py-3 label-eyebrow">Status</th>
+                        <th className="px-4 py-3 label-eyebrow">Submitted</th>
+                        <th className="px-4 py-3 label-eyebrow">Reconciled</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y" style={{borderColor:"var(--border)"}}>
+                      {accountingData?.payments?.map(p => (
+                        <tr key={p.id} className={selectedPayments.has(p.id) ? "bg-blue-50" : ""}>
+                          <td className="px-4 py-3">
+                            <input type="checkbox" checked={selectedPayments.has(p.id)}
+                              onChange={e=>{const s=new Set(selectedPayments);if(e.target.checked)s.add(p.id);else s.delete(p.id);setSelectedPayments(s)}} />
+                          </td>
+                          <td className="px-4 py-3 font-medium">{p.group_name}</td>
+                          <td className="px-4 py-3">{p.user_name}<br/><span className="text-xs" style={{color:"var(--muted)"}}>{p.user_email}</span></td>
+                          <td className="px-4 py-3">Cycle {p.cycle_no}</td>
+                          <td className="px-4 py-3 font-medium">{fmtMoney(p.amount)}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                              p.status === "approved" ? "bg-green-100 text-green-700" :
+                              p.status === "rejected" ? "bg-red-100 text-red-700" :
+                              "bg-yellow-100 text-yellow-700"
+                            }`}>{p.status}</span>
+                          </td>
+                          <td className="px-4 py-3 text-xs" style={{color:"var(--muted)"}}>{fmtDate(p.submitted_at)}</td>
+                          <td className="px-4 py-3">
+                            {p.reconciled_at ? (
+                              <span className="text-xs font-semibold" style={{color:"#16a34a"}}>✓ {fmtDate(p.reconciled_at)}</span>
+                            ) : (
+                              <span className="text-xs" style={{color:"var(--muted)"}}>No</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>

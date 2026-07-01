@@ -1059,6 +1059,8 @@ async def upload_payment(data: PaymentUpload, user=Depends(get_current_user)):
         "approver_id": None,
         "submitted_at": now_utc().isoformat(),
         "decided_at": None,
+        "reconciled_at": None,
+        "reconciled_by": None,
     }
     await db.payments.insert_one(doc.copy())
     await db.member_cycle_status.update_one(
@@ -3140,6 +3142,191 @@ async def ai_preview_summary_email(data: AIPreviewEmailIn, admin=Depends(require
             return {"ok": True, "preview": content}
 
     raise HTTPException(404, "No members with group data found. Make sure members are assigned to groups first.")
+
+
+# ── ACCOUNTING / RECONCILIATION ──
+class AccountingReconciliationIn(BaseModel):
+    cycle_no: Optional[int] = None  # None = all cycles
+    group_id: Optional[str] = None  # None = all groups
+    status_filter: Optional[Literal["approved", "submitted", "rejected"]] = None
+    reconciled_filter: Optional[Literal["reconciled", "unreconciled"]] = None
+
+class MarkReconciledIn(BaseModel):
+    payment_ids: List[str]
+    reconciled: bool = True
+
+@api.post("/admin/accounting/reconciliation")
+async def accounting_reconciliation(data: AccountingReconciliationIn, admin=Depends(require_admin)):
+    """Return a comprehensive reconciliation table for accounting/auditing."""
+    query = {}
+    if data.group_id:
+        query["group_id"] = data.group_id
+    if data.cycle_no:
+        query["cycle_no"] = data.cycle_no
+    if data.status_filter:
+        query["status"] = data.status_filter
+    if data.reconciled_filter == "reconciled":
+        query["reconciled_at"] = {"$ne": None}
+    elif data.reconciled_filter == "unreconciled":
+        query["reconciled_at"] = None
+
+    payments = await db.payments.find(query, {"_id": 0}).sort("submitted_at", -1).to_list(5000)
+    groups = await db.groups.find({}, {"_id": 0}).to_list(1000)
+    group_map = {g["id"]: g for g in groups}
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    user_map = {u["id"]: u for u in users}
+
+    for p in payments:
+        p["group_name"] = group_map.get(p.get("group_id"), {}).get("name", "Unknown")
+        p["user_name"] = user_map.get(p.get("user_id"), {}).get("name", "Unknown")
+        p["user_email"] = user_map.get(p.get("user_id"), {}).get("email", "")
+        g = group_map.get(p.get("group_id"))
+        p["cycle_due_date"] = g.get("cycles", [{}])[p.get("cycle_no", 1) - 1].get("due_date", "") if g else ""
+
+    total_amount = sum(p["amount"] for p in payments if p["status"] == "approved")
+    reconciled_count = sum(1 for p in payments if p.get("reconciled_at"))
+    unreconciled_count = len(payments) - reconciled_count
+
+    return {
+        "payments": payments,
+        "summary": {
+            "total_payments": len(payments),
+            "total_amount": total_amount,
+            "reconciled": reconciled_count,
+            "unreconciled": unreconciled_count,
+        },
+    }
+
+@api.post("/admin/accounting/mark-reconciled")
+async def mark_reconciled(data: MarkReconciledIn, admin=Depends(require_admin)):
+    """Mark payments as reconciled (or unreconciled) with bank statements."""
+    if data.reconciled:
+        await db.payments.update_many(
+            {"id": {"$in": data.payment_ids}},
+            {"$set": {"reconciled_at": now_utc().isoformat(), "reconciled_by": admin["id"]}}
+        )
+    else:
+        await db.payments.update_many(
+            {"id": {"$in": data.payment_ids}},
+            {"$set": {"reconciled_at": None, "reconciled_by": None}}
+        )
+    await log_audit(admin["id"], "accounting_reconciliation_marked",
+                    meta={"payment_ids": len(data.payment_ids), "reconciled": data.reconciled})
+    return {"ok": True, "marked_count": len(data.payment_ids)}
+
+@api.post("/admin/accounting/insights")
+async def accounting_insights(admin=Depends(require_admin)):
+    """AI-powered financial insights: patterns, anomalies, suggestions."""
+    s = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    groq_key = s.get("groq_api_key")
+    if not groq_key:
+        raise HTTPException(400, "Groq API key not configured. Enable AI Assistant in Settings.")
+
+    payments = await db.payments.find({"status": "approved"}, {"_id": 0}).to_list(5000)
+    if len(payments) < 5:
+        return {"ok": True, "insights": "Not enough payment data for AI analysis yet."}
+
+    total_amount = sum(p["amount"] for p in payments)
+    avg_amount = total_amount / len(payments)
+    by_user = {}
+    for p in payments:
+        uid = p["user_id"]
+        by_user.setdefault(uid, {"count": 0, "total": 0, "late_count": 0})
+        by_user[uid]["count"] += 1
+        by_user[uid]["total"] += p["amount"]
+
+    late_payers = []
+    for uid, stats in by_user.items():
+        if stats["count"] > 0 and stats["late_count"] / stats["count"] > 0.3:
+            u = await db.users.find_one({"id": uid}, {"_id": 0, "name": 1})
+            if u:
+                late_payers.append(u["name"])
+
+    context = (
+        f"Total approved payments: {len(payments)}. Total amount: ₦{total_amount:,.0f}. "
+        f"Average payment: ₦{avg_amount:,.0f}. "
+        f"Members with >30% late payments: {len(late_payers)}. "
+        f"Late payer names: {', '.join(late_payers[:5])}."
+    )
+
+    system_prompt = (
+        "You are a financial auditor for an Ajo (rotating savings) platform. "
+        "Analyze the payment data and provide 3-5 concise bullet points of insights. "
+        "Focus on: payment patterns, anomalies, late payers, and actionable suggestions. "
+        "Be specific and professional. Output as plain text (no markdown)."
+    )
+
+    try:
+        insights = await call_groq(groq_key, system_prompt, context, s.get("groq_model") or "llama-3.3-70b-versatile")
+        return {"ok": True, "insights": insights}
+    except Exception as e:
+        raise HTTPException(500, f"AI analysis failed: {str(e)}")
+
+@api.post("/admin/accounting/email-report")
+async def accounting_email_report(data: AccountingReconciliationIn, admin=Depends(require_admin)):
+    """Send accounting reconciliation report to admin email with CSV attachment."""
+    rec_data = await accounting_reconciliation(data, admin)
+    payments = rec_data["payments"]
+    summary = rec_data["summary"]
+
+    import io
+    import csv
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Group", "Member", "Email", "Cycle", "Amount", "Status", "Submitted At", "Reconciled"])
+    for p in payments:
+        writer.writerow([
+            p.get("group_name", ""),
+            p.get("user_name", ""),
+            p.get("user_email", ""),
+            p.get("cycle_no", ""),
+            p.get("amount", ""),
+            p.get("status", ""),
+            p.get("submitted_at", ""),
+            "Yes" if p.get("reconciled_at") else "No",
+        ])
+    csv_content = output.getvalue()
+
+    settings = await db.settings.find_one({"key": "global"}, {"_id": 0}) or {}
+    fe = _get_fe_url(settings)
+    brand = settings.get("brand_name") or "Ajo Platform"
+
+    ai_summary = ""
+    if settings.get("groq_api_key"):
+        try:
+            insights = await accounting_insights(admin)
+            ai_summary = insights.get("insights", "")
+        except:
+            pass
+
+    body_html = (
+        f"<p>Hi <b>{admin['name']}</b>,</p>"
+        f"<p>Here's your accounting reconciliation report.</p>"
+        f"<p><b>Summary:</b></p>"
+        f"<ul>"
+        f"<li>Total payments: {summary['total_payments']}</li>"
+        f"<li>Total amount: ₦{summary['total_amount']:,.0f}</li>"
+        f"<li>Reconciled: {summary['reconciled']}</li>"
+        f"<li>Unreconciled: {summary['unreconciled']}</li>"
+        f"</ul>"
+        + (f"<p><b>AI Insights:</b><br/>{ai_summary.replace(chr(10), '<br/>')}</p>" if ai_summary else "")
+        + f"<p>The detailed CSV is below:</p>"
+    )
+
+    body_html += f"<hr/><pre style='font-size:10px;white-space:pre-wrap'>{csv_content}</pre>"
+
+    await send_email(
+        db, admin["email"],
+        f"Accounting Report — {brand}",
+        "Accounting Reconciliation Report",
+        body_html,
+        cta_label="View Accounting",
+        cta_link=f"{fe}/admin"
+    )
+
+    await log_audit(admin["id"], "accounting_report_emailed",
+                    meta={"cycle_no": data.cycle_no, "group_id": data.group_id, "payments": summary["total_payments"]})
+    return {"ok": True, "emailed_to": admin["email"], "payments_included": summary["total_payments"]}
 
 
 # ── Member: own Ajo summary ──
