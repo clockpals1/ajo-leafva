@@ -3181,7 +3181,9 @@ async def accounting_reconciliation(data: AccountingReconciliationIn, admin=Depe
         p["user_name"] = user_map.get(p.get("user_id"), {}).get("name", "Unknown")
         p["user_email"] = user_map.get(p.get("user_id"), {}).get("email", "")
         g = group_map.get(p.get("group_id"))
-        p["cycle_due_date"] = g.get("cycles", [{}])[p.get("cycle_no", 1) - 1].get("due_date", "") if g else ""
+        cycle_idx = p.get("cycle_no", 1) - 1
+        cycles = g.get("cycles", []) if g else []
+        p["cycle_due_date"] = cycles[cycle_idx].get("due_date", "") if 0 <= cycle_idx < len(cycles) else ""
 
     total_amount = sum(p["amount"] for p in payments if p["status"] == "approved")
     reconciled_count = sum(1 for p in payments if p.get("reconciled_at"))
