@@ -934,7 +934,14 @@ export default function AdminDashboard() {
                       <tr className="text-left">
                         <th className="px-4 py-3">
                           <input type="checkbox" checked={selectedPayments.size > 0 && accountingData.payments.every(p=>selectedPayments.has(p.id))}
-                            onChange={e=>{if(e.target.checked){setSelectedPayments(new Set(accountingData.payments.map(p=>p.id)))}else{setSelectedPayments(new Set())}}}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                setSelectedPayments(new Set(accountingData.payments.map(p => p.id)));
+                              } else {
+                                setSelectedPayments(new Set());
+                              }
+                            }}
+                          />
                         </th>
                         <th className="px-4 py-3 label-eyebrow">Group</th>
                         <th className="px-4 py-3 label-eyebrow">Member</th>
