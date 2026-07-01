@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtMoney, fmtDate, formatErr } from "../api";
 import TopNav from "../components/TopNav";
@@ -191,7 +191,7 @@ export default function AdminDashboard() {
   };
 
   // ── Accounting functions ──
-  const loadAccounting = async () => {
+  const loadAccounting = useCallback(async () => {
     setAccountingLoading(true);
     try {
       const { data } = await api.post("/admin/accounting/reconciliation", accountingFilters);
@@ -199,7 +199,7 @@ export default function AdminDashboard() {
       setSelectedPayments(new Set());
     } catch (e) { alert(formatErr(e?.response?.data?.detail)); }
     finally { setAccountingLoading(false); }
-  };
+  }, [accountingFilters]);
 
   const markReconciled = async (reconciled) => {
     if (selectedPayments.size === 0) return;
